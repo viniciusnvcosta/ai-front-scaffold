@@ -1,0 +1,32 @@
+# Task runner for {{ project_name }}. Run `just` to list recipes.
+set shell := ["bash", "-cu"]
+
+# uv-managed env + deps, git init, hooks
+bootstrap:
+    uv sync
+    test -d .git || git init -q
+    @echo "bootstrap done"
+
+# run the front locally
+dev:
+    uv run {{ module_name }}
+
+# unit + contract tests
+test:
+    uv run pytest -q
+
+# validate I/O schemas against the pinned platform contracts
+contracts:
+    uv run pytest -q tests/contract_tests
+
+# lint + secret scan
+lint:
+    uv run ruff check .
+    @command -v gitleaks >/dev/null && gitleaks detect --no-banner || echo "gitleaks not installed; skipping"
+
+# pull scaffold/base improvements into this repo
+update:
+    uvx copier update --trust
+
+default:
+    @just --list

@@ -1,0 +1,18 @@
+# CLAUDE.md — {{ project_name }}
+
+## Canonical conventions (shared, do not duplicate here)
+@.ai-scaffold/CLAUDE.base.md
+
+## Project-specific documentation (scope + roadmap)
+@README.md
+
+## This front's identity
+- **Director recipe:** {{ recipe }}
+- **Concrete Builder:** `{{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder` in `src/{{ module_name }}/front/builder.py`
+- **Writes to the system of record?** {% if writes_to_system_of_record %}YES — this is the hub front{% else %}No — emits events/proposals only{% endif %}
+
+## Specifics (only what deviates from the base)
+- <add project-specific rules here; keep it short>
+
+## Project-specific commands (beyond the canonical justfile recipes)
+- <add here>

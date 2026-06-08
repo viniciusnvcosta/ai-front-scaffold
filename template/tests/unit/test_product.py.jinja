@@ -1,0 +1,7 @@
+from {{ module_name }}.main import build
+
+
+def test_front_assembles_and_is_healthy():
+    front = build()
+    assert front.name == "{{ project_slug }}"
+    assert front.healthcheck() is True

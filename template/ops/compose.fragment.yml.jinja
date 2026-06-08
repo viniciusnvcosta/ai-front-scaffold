@@ -1,0 +1,9 @@
+# Merged into the platform layer's docker-compose. Defines this front only.
+services:
+  {{ project_slug }}:
+    build: .
+    env_file: [.env]
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+    depends_on: []
+    restart: unless-stopped

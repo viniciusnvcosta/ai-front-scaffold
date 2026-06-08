@@ -1,0 +1,12 @@
+# syntax=docker/dockerfile:1
+FROM ghcr.io/astral-sh/uv:python{{ python_version }}-bookworm-slim
+
+WORKDIR /app
+COPY pyproject.toml uv.lock* ./
+RUN uv sync --frozen --no-dev || uv sync --no-dev
+COPY . .
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD uv run python ops/healthcheck.py || exit 1
+
+CMD ["uv", "run", "{{ module_name }}"]

@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+.uv/
+uv.lock
+.env
+.ruff_cache/
+.pytest_cache/
+dist/
+*.rej

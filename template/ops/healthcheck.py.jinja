@@ -1,0 +1,19 @@
+"""Container healthcheck: exits 0 if the front assembles and is healthy."""
+import sys
+
+try:
+    from {{ module_name }}.main import build  # noqa: F401
+except Exception:  # pragma: no cover
+    # module name is templated; if import path differs, treat as unhealthy
+    sys.exit(1)
+
+
+def main() -> int:
+    try:
+        return 0 if build().healthcheck() else 1
+    except Exception:
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,43 @@
+# {{ project_name }}
+
+> {{ description }}
+>
+> Recipe: **{{ recipe }}** · Writes to system of record: **{% if writes_to_system_of_record %}yes (hub){% else %}no{% endif %}**
+
+This repository follows the shared AI-front scaffold. Conventions (scaffolding,
+Builder pattern, invariants, Definition of Done) live in `.ai-scaffold/CLAUDE.base.md`
+and are kept in sync with `just update`.
+
+## Quickstart
+
+```bash
+just bootstrap
+just test
+just dev
+```
+
+## Scope
+
+- **In scope:** <fill in>
+- **Out of scope:** <fill in>
+
+## Architecture
+
+This front is assembled by `FrontDirector.build_{{ recipe }}_front()` using
+`{{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder`. Each
+`src/{{ module_name }}/<step>` package maps to one builder step.
+
+## Roadmap
+
+| Milestone | Steps | Success criteria |
+|---|---|---|
+| M1 | <...> | <measurable> |
+
+## Success criteria
+
+- <measurable outcome>
+
+## Contracts
+
+- **Consumes:** <contract@version>
+- **Produces:** <contract@version>

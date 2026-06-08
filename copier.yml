@@ -1,0 +1,71 @@
+_min_copier_version: "9.0.0"
+
+# ----------------------------------------------------------------------------
+# Copier configuration
+# ----------------------------------------------------------------------------
+_subdirectory: template
+_templates_suffix: .jinja
+_envops:
+  keep_trailing_newline: true
+_answers_file: .copier-answers.yml
+
+_message_after_copy: |
+  AI front generated.
+
+  Next steps:
+    cd {{ _copier_conf.dst_path }}
+    just bootstrap     # uv sync + git init + hooks
+    just test
+
+  Pull future scaffold improvements at any time with:
+    just update        # (copier update)
+
+_message_after_update: |
+  Scaffold updated. Review the diff, resolve any .rej conflicts, then:
+    just test
+
+# ----------------------------------------------------------------------------
+# Questions
+# ----------------------------------------------------------------------------
+project_name:
+  type: str
+  help: Human-readable name of the AI front (e.g. "Lead Enrichment Engine")
+
+project_slug:
+  type: str
+  help: kebab-case repository / directory name
+  default: "{{ project_name | lower | replace(' ', '-') | replace('_', '-') }}"
+
+module_name:
+  type: str
+  help: snake_case Python package name
+  default: "{{ project_slug | lower | replace('-', '_') }}"
+
+description:
+  type: str
+  help: One-line description of this front
+  default: An AI front.
+
+recipe:
+  type: str
+  help: Director recipe / front archetype
+  choices:
+    - collector
+    - hub
+    - agent
+  default: collector
+
+writes_to_system_of_record:
+  type: bool
+  help: Is this the single hub front that writes to the shared system of record?
+  default: "{{ recipe == 'hub' }}"
+
+python_version:
+  type: str
+  help: Target Python version
+  default: "3.11"
+
+author:
+  type: str
+  help: Author or team name
+  default: ""

@@ -1,0 +1,23 @@
+"""Client: wire the Director with this front's Concrete Builder."""
+from __future__ import annotations
+
+import logging
+
+from .front.builder import {{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder
+from .front.director import FrontDirector
+
+logging.basicConfig(level=logging.INFO)
+
+
+def build():
+    director = FrontDirector({{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder())
+    return director.build_{{ recipe }}_front()
+
+
+def main() -> None:
+    front = build()
+    front.run()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,105 @@
+"""The Builder interface + this front's Concrete Builder.
+
+Recipe for this front: {{ recipe }}
+Writes to system of record: {{ writes_to_system_of_record }}
+"""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+from .product import AIFront
+
+
+class AIFrontBuilder(ABC):
+    @abstractmethod
+    def reset(self) -> None: ...
+    @abstractmethod
+    def with_config(self) -> "AIFrontBuilder": ...
+    @abstractmethod
+    def with_input_contracts(self) -> "AIFrontBuilder": ...
+    @abstractmethod
+    def with_collectors(self) -> "AIFrontBuilder": ...
+    @abstractmethod
+    def with_processors(self) -> "AIFrontBuilder": ...
+    @abstractmethod
+    def with_llm_adapter(self) -> "AIFrontBuilder": ...
+    @abstractmethod
+    def with_output_contracts(self) -> "AIFrontBuilder": ...
+    @abstractmethod
+    def with_human_gates(self) -> "AIFrontBuilder": ...
+    @abstractmethod
+    def with_observability(self) -> "AIFrontBuilder": ...
+    @abstractmethod
+    def build(self) -> AIFront: ...
+
+
+class {{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder(AIFrontBuilder):
+    """Concrete Builder for {{ project_name }}.
+
+    Fill the steps relevant to a `{{ recipe }}` front. Steps not used by the
+    chosen recipe are still defined (interface contract) but may be no-ops.
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self._front = AIFront(name="{{ project_slug }}")
+
+    def with_config(self) -> "AIFrontBuilder":
+        from ..config import load_config
+        self._front.config = load_config()
+        return self
+
+    def with_input_contracts(self) -> "AIFrontBuilder":
+        # TODO: register consumers/endpoints and pin input contract versions.
+        return self
+
+    def with_collectors(self) -> "AIFrontBuilder":
+{%- if recipe == 'collector' %}
+        # TODO: register external collectors (APIs, scrapers) in src/{{ module_name }}/collectors.
+{%- else %}
+        # Not central to a `{{ recipe }}` front; left thin by design.
+{%- endif %}
+        return self
+
+    def with_processors(self) -> "AIFrontBuilder":
+        # TODO: register validators / normalizers / scoring / routing.
+        return self
+
+    def with_llm_adapter(self) -> "AIFrontBuilder":
+{%- if recipe in ['collector', 'agent'] %}
+        from ..llm.adapter import build_llm_adapter
+        self._front.llm_adapter = build_llm_adapter()
+{%- else %}
+        # `hub` fronts typically orchestrate rather than reason; omit if unused.
+{%- endif %}
+        return self
+
+    def with_output_contracts(self) -> "AIFrontBuilder":
+{%- if writes_to_system_of_record %}
+        # HUB: this is the single writer to the system of record.
+        # TODO: register the system-of-record writer in src/{{ module_name }}/outputs.
+{%- else %}
+        # Emits events/proposals only. MUST NOT hold write creds to the system of record.
+        # TODO: register the event emitter in src/{{ module_name }}/outputs.
+{%- endif %}
+        return self
+
+    def with_human_gates(self) -> "AIFrontBuilder":
+{%- if recipe == 'hub' %}
+        # TODO: register human decision gates for irreversible/high-impact actions.
+{%- else %}
+        # No human gates in a `{{ recipe }}` front.
+{%- endif %}
+        return self
+
+    def with_observability(self) -> "AIFrontBuilder":
+        from ..observability import build_observability
+        self._front.observability = build_observability("{{ project_slug }}")
+        return self
+
+    def build(self) -> AIFront:
+        front = self._front
+        self.reset()
+        return front
