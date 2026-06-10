@@ -63,6 +63,8 @@ Practical payoff: a new front does **not** reinvent lifecycle, healthcheck, cont
 
 Each `src/<module>` subpackage maps **1:1 to a builder step**. A front fills the directories that characterize it densely and leaves the rest thin (e.g., a `collector` front has rich `collectors/` and empty `gates/`; a `gateway` front has rich `inputs/` + `outputs/` + `collectors/` (the channel) + a consent gate in `processors/`, but empty `gates/`; a `hub` front has rich `outputs/` + `gates/`; an `agent` front has rich `processors/` + `llm/`).
 
+Concretely, across domains: a `collector` is a metrics shipper / price poller / scraping enricher; a `gateway` owns an outbound email/SMS/push channel with an opt-in gate; a `hub` is the single writer to an order DB / ledger / provisioning system; an `agent` is a ticket-triage / PR-review / document-analysis proposer. An LLM-judge, a router, and a multi-agent supervisor are `agent`/`processors` use-cases, not new recipes (see §7).
+
 ---
 
 ## 3. The Builder interface (mandatory steps, fixed order)
@@ -136,11 +138,12 @@ class FrontDirector:
     def build_gateway_front(self) -> "AIFront":     # owns one external channel; emits events
         self._base()
         self._b.with_input_contracts()
-        self._b.with_collectors()                   # the external channel adapter
-        self._b.with_processors()                   # consent gate (ahead of egress) + rate limit + retry/DLQ
-        self._b.with_llm_adapter()                  # optional: classify inbound replies
+        self._b.with_processors()                   # eligibility/consent gate (MUST precede egress) + rate limit
+        self._b.with_collectors()                   # the owned external channel adapter (egress/ingress)
         self._b.with_output_contracts()
         return self._b.build()
+        # Note: processors BEFORE collectors — the inverse of `collector`'s ingress-first
+        # order. The sequence itself enforces "gate before egress" (invariant 7).
 
     def build_hub_front(self) -> "AIFront":         # single writer to the system of record
         self._base()
@@ -214,7 +217,7 @@ just update       # copier update — pull scaffold/base improvements into this 
 ## 7. Creating a new front (future projects)
 
 1. `uvx copier copy <scaffold-url> <dest>` and answer the prompts (name, module, recipe, etc.).
-2. Pick the director recipe (`collector` | `gateway` | `hub` | `agent`) — or add a new recipe only if the assembly order is genuinely different.
+2. Pick the director recipe (`collector` | `gateway` | `hub` | `agent`) — or add a new recipe only if the assembly order is genuinely different. **Each recipe is a distinct construction sequence; no two recipes share an identical step order.** That is the Builder contract — different representations come from different construction _processes_. If a candidate's order matches an existing recipe, it is a _use-case_ of that recipe, not a new recipe (e.g. an LLM-judge or a multi-agent supervisor is an `agent`; content-based routing is a `processors` responsibility).
 3. Implement the `ConcreteBuilder`, filling only the relevant steps.
 4. Define/extend the shared `contracts/` and pin the version.
 5. Write the project `README.md` (scope + roadmap + success criteria).

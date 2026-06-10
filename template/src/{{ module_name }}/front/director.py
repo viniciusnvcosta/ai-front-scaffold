@@ -30,18 +30,20 @@ class FrontDirector:
         return self._b.build()
 
     def build_gateway_front(self) -> AIFront:
-        """ingest <-> external channel; enforce eligibility/consent before egress.
+        """ingest -> gate -> external channel -> emit status (no SoR write).
 
         Owns a single external channel (messaging, email, telephony). Heavy
         inputs AND outputs, but NEVER writes to the system of record: it emits
-        events/status. The defining trait is the consent/eligibility gate that
-        sits in `processors` ahead of any outbound message.
+        events/status. The ORDER is the point: `processors` (the eligibility/
+        consent gate, rate limit, retry/DLQ) runs BEFORE `collectors` (the
+        channel adapter), so egress is structurally unreachable until the gate
+        has passed. This is the inverse of the collector's ingress-first order
+        (collect, then process) and is what makes gateway a distinct recipe.
         """
         self._base()
         self._b.with_input_contracts()
-        self._b.with_collectors()  # the external channel adapter
-        self._b.with_processors()  # consent gate, rate limit, retry/DLQ, reply classification
-        self._b.with_llm_adapter()  # optional: classify inbound replies
+        self._b.with_processors()  # eligibility/consent gate (MUST precede egress) + rate limit + retry/DLQ
+        self._b.with_collectors()  # the owned external channel adapter (egress/ingress)
         self._b.with_output_contracts()
         return self._b.build()
 

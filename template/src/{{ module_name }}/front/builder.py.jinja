@@ -77,9 +77,12 @@ class {{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder(
         return self
 
     def with_llm_adapter(self) -> "AIFrontBuilder":
-{%- if recipe in ['collector', 'agent', 'gateway'] %}
+{%- if recipe in ['collector', 'agent'] %}
         from ..llm.adapter import build_llm_adapter
         self._front.llm_adapter = build_llm_adapter()
+{%- elif recipe == 'gateway' %}
+        # A `gateway` does not reason by default; reply classification, if any,
+        # is a processor. Wire an adapter here only if you genuinely need one.
 {%- else %}
         # `hub` fronts typically orchestrate rather than reason; omit if unused.
 {%- endif %}
