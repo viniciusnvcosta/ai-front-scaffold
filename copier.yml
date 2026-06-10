@@ -50,9 +50,10 @@ recipe:
   type: str
   help: Director recipe / front archetype
   choices:
-    - collector
-    - hub
-    - agent
+    - collector  # ingest -> process -> emit
+    - gateway    # owns one external egress channel; consent gate; emits events
+    - hub        # single writer to the system of record; human gates
+    - agent      # input -> reason -> propose
   default: collector
 
 writes_to_system_of_record:

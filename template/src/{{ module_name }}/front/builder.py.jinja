@@ -58,17 +58,26 @@ class {{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder(
     def with_collectors(self) -> "AIFrontBuilder":
 {%- if recipe == 'collector' %}
         # TODO: register external collectors (APIs, scrapers) in src/{{ module_name }}/collectors.
+{%- elif recipe == 'gateway' %}
+        # GATEWAY: register the single external channel adapter (the integration
+        # this front owns) in src/{{ module_name }}/collectors. No other front
+        # may hold credentials to this channel.
 {%- else %}
         # Not central to a `{{ recipe }}` front; left thin by design.
 {%- endif %}
         return self
 
     def with_processors(self) -> "AIFrontBuilder":
+{%- if recipe == 'gateway' %}
+        # GATEWAY: the eligibility/consent gate lives here and MUST run ahead of
+        # any egress. Also: rate limiting, retry/backoff, DLQ, reply classification.
+{%- else %}
         # TODO: register validators / normalizers / scoring / routing.
+{%- endif %}
         return self
 
     def with_llm_adapter(self) -> "AIFrontBuilder":
-{%- if recipe in ['collector', 'agent'] %}
+{%- if recipe in ['collector', 'agent', 'gateway'] %}
         from ..llm.adapter import build_llm_adapter
         self._front.llm_adapter = build_llm_adapter()
 {%- else %}

@@ -51,14 +51,20 @@ references for uv+ruff+pytest wiring but are not dependencies of this scaffold.
 
 ## Recipes (front archetypes)
 
-| Recipe      | Shape                               | Writes to system of record? |
-| ----------- | ----------------------------------- | --------------------------- |
-| `collector` | ingest → process → emit             | no                          |
-| `hub`       | single writer; enforces human gates | yes (the only one)          |
-| `agent`     | input → reason → propose            | no                          |
+| Recipe      | Shape                                                               | Writes to system of record? |
+| ----------- | ------------------------------------------------------------------- | --------------------------- |
+| `collector` | ingest → process → emit                                             | no                          |
+| `gateway`   | owns one external channel; consent gate before egress; emits events | no                          |
+| `hub`       | single writer; enforces human gates                                 | yes (the only one)          |
+| `agent`     | input → reason → propose                                            | no                          |
+
+`gateway` sits between `collector` and `hub`: heavy inputs _and_ outputs, but it
+emits events instead of writing to the system of record. Its defining trait is the
+eligibility/consent gate in `processors/` that runs ahead of any outbound message —
+see invariant 7 ("single channel owner") in `CLAUDE.base.md`.
 
 Add a new recipe in `template/src/<module>/front/director.py` only when the assembly
-_order_ is genuinely different — otherwise reuse one of the three.
+_order_ is genuinely different — otherwise reuse one of the four.
 
 ## Maintaining this repo
 

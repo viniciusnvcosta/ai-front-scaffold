@@ -19,7 +19,7 @@ All fronts share the **same anatomy**. What differs between them is _which parts
 | **Product**             | `AIFront`              | the assembled service: config + inputs + collectors + processors + llm + outputs + gates + observability + runtime |
 | **Builder (interface)** | `AIFrontBuilder`       | declares the construction steps common to all fronts                                                               |
 | **Concrete Builders**   | one per front          | implement the steps differently per front                                                                          |
-| **Director**            | `FrontDirector`        | encapsulates the assembly _recipes_ (`collector`, `hub`, `agent`)                                                  |
+| **Director**            | `FrontDirector`        | encapsulates the assembly _recipes_ (`collector`, `gateway`, `hub`, `agent`)                                       |
 | **Client**              | `src/<module>/main.py` | picks a builder, asks the director for a recipe, gets a ready `AIFront`                                            |
 
 Practical payoff: a new front does **not** reinvent lifecycle, healthcheck, contract validation, observability, or wiring. It implements only the parts that make it distinct. Fronts stay consistent, testable, and generatable.
@@ -61,7 +61,7 @@ Practical payoff: a new front does **not** reinvent lifecycle, healthcheck, cont
     └── healthcheck.py
 ```
 
-Each `src/<module>` subpackage maps **1:1 to a builder step**. A front fills the directories that characterize it densely and leaves the rest thin (e.g., a `collector` front has rich `collectors/` and empty `gates/`; a `hub` front has rich `outputs/` + `gates/`; an `agent` front has rich `processors/` + `llm/`).
+Each `src/<module>` subpackage maps **1:1 to a builder step**. A front fills the directories that characterize it densely and leaves the rest thin (e.g., a `collector` front has rich `collectors/` and empty `gates/`; a `gateway` front has rich `inputs/` + `outputs/` + `collectors/` (the channel) + a consent gate in `processors/`, but empty `gates/`; a `hub` front has rich `outputs/` + `gates/`; an `agent` front has rich `processors/` + `llm/`).
 
 ---
 
@@ -133,6 +133,15 @@ class FrontDirector:
         self._b.with_output_contracts()
         return self._b.build()
 
+    def build_gateway_front(self) -> "AIFront":     # owns one external channel; emits events
+        self._base()
+        self._b.with_input_contracts()
+        self._b.with_collectors()                   # the external channel adapter
+        self._b.with_processors()                   # consent gate (ahead of egress) + rate limit + retry/DLQ
+        self._b.with_llm_adapter()                  # optional: classify inbound replies
+        self._b.with_output_contracts()
+        return self._b.build()
+
     def build_hub_front(self) -> "AIFront":         # single writer to the system of record
         self._base()
         self._b.with_input_contracts()
@@ -171,6 +180,7 @@ front.run()
 4. **Risk gates are always human.** Irreversible or high-impact actions are routed through a human gate, never auto-executed.
 5. **No secrets in the repo.** `config/` holds only _references_ to secrets; values live in a secret manager. CI fails if a secret is detected.
 6. **Idempotency.** Event consumers are idempotent (natural key, e.g. `event_id`). Reprocessing causes no duplicate effect.
+7. **Single channel owner.** Each external egress channel (messaging, email, telephony, …) is owned by exactly one `gateway` front, which enforces an eligibility/consent gate **before** any outbound message and emits status events. No other front holds that channel's credentials. Like the hub's single-writer rule, this keeps an external side effect funneled through one auditable boundary.
 
 ---
 
@@ -204,7 +214,7 @@ just update       # copier update — pull scaffold/base improvements into this 
 ## 7. Creating a new front (future projects)
 
 1. `uvx copier copy <scaffold-url> <dest>` and answer the prompts (name, module, recipe, etc.).
-2. Pick the director recipe (`collector` | `hub` | `agent`) — or add a new recipe only if the assembly order is genuinely different.
+2. Pick the director recipe (`collector` | `gateway` | `hub` | `agent`) — or add a new recipe only if the assembly order is genuinely different.
 3. Implement the `ConcreteBuilder`, filling only the relevant steps.
 4. Define/extend the shared `contracts/` and pin the version.
 5. Write the project `README.md` (scope + roadmap + success criteria).

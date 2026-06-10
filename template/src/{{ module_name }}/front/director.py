@@ -29,6 +29,22 @@ class FrontDirector:
         self._b.with_output_contracts()
         return self._b.build()
 
+    def build_gateway_front(self) -> AIFront:
+        """ingest <-> external channel; enforce eligibility/consent before egress.
+
+        Owns a single external channel (messaging, email, telephony). Heavy
+        inputs AND outputs, but NEVER writes to the system of record: it emits
+        events/status. The defining trait is the consent/eligibility gate that
+        sits in `processors` ahead of any outbound message.
+        """
+        self._base()
+        self._b.with_input_contracts()
+        self._b.with_collectors()  # the external channel adapter
+        self._b.with_processors()  # consent gate, rate limit, retry/DLQ, reply classification
+        self._b.with_llm_adapter()  # optional: classify inbound replies
+        self._b.with_output_contracts()
+        return self._b.build()
+
     def build_hub_front(self) -> AIFront:
         """single writer to the system of record; enforces human gates."""
         self._base()

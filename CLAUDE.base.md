@@ -1,0 +1,1 @@
+template/.ai-scaffold/CLAUDE.base.md
