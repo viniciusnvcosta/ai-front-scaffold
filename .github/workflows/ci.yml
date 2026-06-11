@@ -6,7 +6,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        recipe: [collector, gateway, hub, agent]
+        recipe: [collector, gateway, retriever, sink, hub, agent, api, scheduler]
     steps:
       - uses: actions/checkout@v4
       - name: Install uv

@@ -20,6 +20,8 @@ class AIFrontBuilder(ABC):
     @abstractmethod
     def with_collectors(self) -> "AIFrontBuilder": ...
     @abstractmethod
+    def with_store(self) -> "AIFrontBuilder": ...
+    @abstractmethod
     def with_processors(self) -> "AIFrontBuilder": ...
     @abstractmethod
     def with_llm_adapter(self) -> "AIFrontBuilder": ...
@@ -67,24 +69,40 @@ class {{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder(
 {%- endif %}
         return self
 
+    def with_store(self) -> "AIFrontBuilder":
+{%- if recipe in ['retriever', 'sink'] %}
+        from ..store import build_store
+        # Single-owner operational store ({{ 'vector/knowledge index' if recipe == 'retriever' else 'archive / data lake' }}).
+        # NOT the system of record. No other front holds write creds to it.
+        self._front.store = build_store()
+{%- else %}
+        # No owned store in a `{{ recipe }}` front.
+{%- endif %}
+        return self
+
     def with_processors(self) -> "AIFrontBuilder":
 {%- if recipe == 'gateway' %}
         # GATEWAY: the eligibility/consent gate lives here and MUST run ahead of
         # any egress. Also: rate limiting, retry/backoff, DLQ, reply classification.
+{%- elif recipe == 'scheduler' %}
+        # SCHEDULER: evaluate schedules / SLAs / due items on each tick; emit what fires.
 {%- else %}
         # TODO: register validators / normalizers / scoring / routing.
 {%- endif %}
         return self
 
     def with_llm_adapter(self) -> "AIFrontBuilder":
-{%- if recipe in ['collector', 'agent'] %}
+{%- if recipe in ['collector', 'agent', 'retriever', 'api'] %}
         from ..llm.adapter import build_llm_adapter
+{%- if recipe == 'retriever' %}
+        # Embeddings (and optional generation) for retrieval-augmented serving.
+{%- endif %}
         self._front.llm_adapter = build_llm_adapter()
 {%- elif recipe == 'gateway' %}
         # A `gateway` does not reason by default; reply classification, if any,
         # is a processor. Wire an adapter here only if you genuinely need one.
 {%- else %}
-        # `hub` fronts typically orchestrate rather than reason; omit if unused.
+        # This front does not reason by default; wire an adapter only if needed.
 {%- endif %}
         return self
 

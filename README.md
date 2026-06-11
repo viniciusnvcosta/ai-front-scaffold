@@ -21,7 +21,7 @@ Requires [uv](https://docs.astral.sh/uv/). Copier runs through `uvx` — nothing
 
 ```bash
 uvx copier copy gh:<org>/ai-front-scaffold ./my-new-front
-# prompts: project_name, module_name, recipe (collector|hub|agent), ...
+# prompts: project_name, module_name, recipe (collector|gateway|retriever|sink|hub|agent|api|scheduler), ...
 cd my-new-front
 just bootstrap   # uv sync + git init + hooks
 just test
@@ -53,22 +53,29 @@ references for uv+ruff+pytest wiring but are not dependencies of this scaffold.
 
 A recipe is a **distinct assembly order** of builder steps (the Director's job in the
 Builder pattern). Each step after the mandatory `config` + `observability` base:
-`input` (input contracts) · `collectors` (external integrations) · `processors`
-(validate/normalize/score/route) · `llm` (reason) · `output` (emit events) ·
-`gates` (human approval).
+`input` (input contracts) · `collectors` (external integrations) · `store` (an owned,
+non-SoR operational store) · `processors` (validate/normalize/score/route) · `llm`
+(reason) · `output` (emit events) · `gates` (human approval). Event-driven recipes run
+via `AIFront.run()`; the `api` recipe is synchronous and runs via `AIFront.serve()`.
 
-| Recipe      | Assembly order (after base)                  | Writes to system of record? |
-| ----------- | -------------------------------------------- | --------------------------- |
-| `collector` | input → **collectors → processors** → llm → output | no                    |
-| `gateway`   | input → **processors → collectors** → output | no                          |
-| `hub`       | input → processors → output → **gates**      | yes (the only one)          |
-| `agent`     | input → **llm → processors** → output         | no                          |
+| Recipe      | Assembly order (after base)                        | Lifecycle | Writes to system of record? |
+| ----------- | -------------------------------------------------- | --------- | --------------------------- |
+| `collector` | input → **collectors → processors** → llm → output | `run`     | no                          |
+| `gateway`   | input → **processors → collectors** → output       | `run`     | no                          |
+| `retriever` | input → llm → **store** → processors → output      | `run`     | no                          |
+| `sink`      | input → processors → **store** (terminal, no emit) | `run`     | no                          |
+| `hub`       | input → processors → output → **gates**            | `run`     | yes (the only one)          |
+| `agent`     | input → **llm → processors** → output              | `run`     | no                          |
+| `api`       | input → **processors → llm** → output              | `serve`   | no                          |
+| `scheduler` | **processors → output** (no input; clock-triggered)| `run`     | no                          |
 
 No two recipes share an order — that's what makes each a real recipe rather than a
-rename. Note `collector` and `gateway` are mirror images: `collector` is **ingress-first**
-(collect, then process), `gateway` is **policy-first** (gate, then act on the channel), so
-its egress is structurally unreachable until the eligibility/consent gate has passed
-(invariant 7, "single channel owner").
+rename. A few are deliberate mirror images: `collector` is **ingress-first** (collect,
+then process) while `gateway` is **policy-first** (gate, then act on the channel), so its
+egress is unreachable until the consent gate passes (invariant 7); `retriever` reads its
+store mid-flow while `sink` is **terminal** — it ends in the store and emits nothing
+(invariant 8, "single owner per store"); `api` is the only **synchronous** recipe; and
+`scheduler` is the only one with **no input contracts** — its trigger is the clock.
 
 ### What each is for (beyond the original CRM domain)
 
@@ -77,6 +84,18 @@ its egress is structurally unreachable until the eligibility/consent gate has pa
 - **`gateway`** — owns one external egress channel; consent/eligibility gate before egress.
   _Outbound email/SMTP · SMS or WhatsApp sender with opt-in · push-notification (APNs/FCM)
   fan-out · any rate-limited, quota'd third-party egress (payment charge, shipping-label)._
+- **`retriever`** — owns a vector/knowledge store; serves retrieval-augmented context.
+  _RAG context service · semantic search over a doc corpus · embeddings indexer ·
+  long-term agent memory._
+- **`sink`** — terminal consumer; persists to a secondary (non-SoR) store, emits nothing.
+  _Data-lake / warehouse loader · audit-log archiver · event-to-cold-storage writer ·
+  analytics materializer._
+- **`api`** — synchronous request/response endpoint (`serve`, not the event loop).
+  _LLM inference / BFF endpoint · RAG-backed query API · classification/scoring service ·
+  internal tool the agents call._
+- **`scheduler`** — clock-triggered emitter; no input contracts, emits on a timer.
+  _SLA watchdog / escalation · periodic re-enrichment or re-index kickoff · heartbeat ·
+  batch-window trigger._
 - **`hub`** — the single writer to the system of record; human gates on irreversible writes.
   _Order-management writer · inventory ledger with approval · account provisioning · GL
   posting behind a human gate._
@@ -87,29 +106,11 @@ its egress is structurally unreachable until the eligibility/consent gate has pa
   order is identical.
 
 Add a new recipe in `template/src/<module>/front/director.py` only when the assembly
-_order_ is genuinely different — otherwise reuse one of the four.
-
-## Candidate archetypes (backlog)
-
-Ranked by demand and by how much new machinery they require. The bar is the same as
-above: a candidate earns a recipe only if its assembly order is genuinely new (which here
-means it needs a **new builder step or lifecycle** — every order over the _existing_ steps
-is already taken).
-
-| Priority | Candidate          | Shape                                              | What it needs first |
-| -------- | ------------------ | -------------------------------------------------- | ------------------- |
-| **P0**   | `retriever`/memory | owns a vector/knowledge store; serves RAG context  | a new `with_store` step + a "single owner per store" invariant (mirrors hub's single-writer & gateway's single-channel) |
-| **P1**   | `sink`/archiver    | terminal consumer; writes a secondary non-SoR store (data lake, audit) | the _same_ `with_store` step — rides P0 |
-| **P1**   | `api`/bff          | synchronous request/response instead of the event-loop `run()` | a distinct `serve()` lifecycle on `AIFront` (touches `product.py`) |
-| **P2**   | `scheduler`/cron   | time-driven emitter; no input contracts            | nothing structural, but often better modeled as deployment-time triggering of a `collector` |
-
-`with_store` is the highest-leverage next step: it unlocks **both** `retriever`
-(read-heavy) and `sink` (write-heavy) and introduces one clean new invariant alongside the
-existing single-writer (hub) and single-channel (gateway) ones. The synchronous `api`/bff
-is just as common but its second-lifecycle prerequisite is heavier and risks diluting the
-scaffold's event-driven identity, so it sits behind the store work. `scheduler` needs no
-new machinery but is frequently infrastructure (a cron sidecar invoking a `collector`)
-rather than a front in its own right.
+_order_ is genuinely different — otherwise reuse one of the eight. Every ordering over the
+existing steps is now taken, so a genuinely new recipe means introducing a **new builder
+step or lifecycle** first (as `with_store` and `serve()` did). A `scheduler` is a thin
+front; if its only input is the clock, prefer deployment-time triggering (a cron sidecar
+invoking it) over baking a tick loop into the process.
 
 ## Maintaining this repo
 

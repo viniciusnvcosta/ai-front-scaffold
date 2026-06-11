@@ -47,6 +47,35 @@ class FrontDirector:
         self._b.with_output_contracts()
         return self._b.build()
 
+    def build_retriever_front(self) -> AIFront:
+        """query/index -> embed -> store -> rerank -> serve context (no SoR write).
+
+        Owns a single vector/knowledge store (invariant 8). Embeds the query or
+        document (llm), reads/writes its OWN store, re-ranks/formats (processors),
+        and emits the retrieved context. The store sits between llm and processors,
+        which is an order no other recipe has.
+        """
+        self._base()
+        self._b.with_input_contracts()
+        self._b.with_llm_adapter()  # embeddings (+ optional generation)
+        self._b.with_store()  # the owned knowledge/vector store
+        self._b.with_processors()  # chunking / re-ranking / formatting
+        self._b.with_output_contracts()
+        return self._b.build()
+
+    def build_sink_front(self) -> AIFront:
+        """consume -> normalize -> persist to a secondary store; terminal (no emit, no SoR).
+
+        Terminal consumer: it is the only recipe that ends in `with_store` and
+        omits `with_output_contracts` entirely — it persists to its OWN store
+        (data lake / audit log, invariant 8) and emits nothing onward.
+        """
+        self._base()
+        self._b.with_input_contracts()
+        self._b.with_processors()  # validate / normalize / partition
+        self._b.with_store()  # the owned archive / data-lake store
+        return self._b.build()
+
     def build_hub_front(self) -> AIFront:
         """single writer to the system of record; enforces human gates."""
         self._base()
@@ -62,5 +91,32 @@ class FrontDirector:
         self._b.with_input_contracts()
         self._b.with_llm_adapter()
         self._b.with_processors()
+        self._b.with_output_contracts()
+        return self._b.build()
+
+    def build_api_front(self) -> AIFront:
+        """request -> validate -> reason -> response; SYNCHRONOUS (serve lifecycle, no SoR write).
+
+        Unlike the event-driven recipes, the assembled front is driven by
+        AIFront.serve() (request/response), not run(). Order is
+        input -> processors -> llm -> output, distinct from every other recipe.
+        """
+        self._base()
+        self._b.with_input_contracts()  # request schema / endpoints
+        self._b.with_processors()  # auth / validation / routing
+        self._b.with_llm_adapter()  # reason (inference / RAG-backed responses)
+        self._b.with_output_contracts()  # response schema
+        return self._b.build()
+
+    def build_scheduler_front(self) -> AIFront:
+        """tick -> decide what's due -> emit (clock-triggered, no SoR write).
+
+        The only recipe with NO with_input_contracts: its trigger is the clock,
+        not a consumed event. On each tick `processors` decide what is due
+        (cron expression, SLA watchdog, heartbeat) and `output` emits the
+        resulting events. Driven by run() as a tick loop.
+        """
+        self._base()
+        self._b.with_processors()  # evaluate schedules / SLAs / due items on each tick
         self._b.with_output_contracts()
         return self._b.build()

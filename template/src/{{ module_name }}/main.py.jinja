@@ -16,7 +16,11 @@ def build():
 
 def main() -> None:
     front = build()
-    front.run()
+{%- if recipe == 'api' %}
+    front.serve()   # synchronous request/response lifecycle
+{%- else %}
+    front.run()     # event-driven lifecycle
+{%- endif %}
 
 
 if __name__ == "__main__":

@@ -52,8 +52,12 @@ recipe:
   choices:
     - collector  # ingest -> process -> emit
     - gateway    # owns one external egress channel; consent gate; emits events
+    - retriever  # owns a vector/knowledge store; serves RAG context
+    - sink       # terminal; persists to a secondary (non-SoR) store
     - hub        # single writer to the system of record; human gates
     - agent      # input -> reason -> propose
+    - api        # synchronous request/response (serve lifecycle)
+    - scheduler  # clock-triggered emitter; no input contracts
   default: collector
 
 writes_to_system_of_record:

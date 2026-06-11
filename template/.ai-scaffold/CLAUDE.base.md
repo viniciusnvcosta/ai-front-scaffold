@@ -49,6 +49,7 @@ Practical payoff: a new front does **not** reinvent lifecycle, healthcheck, cont
 │   ├── collectors/                # external integrations (APIs, scrapers)
 │   ├── processors/                # validators, normalizers, scoring, routing
 │   ├── llm/                       # provider-agnostic adapter (self-hostable first)
+│   ├── store/                     # owned operational store (vector/knowledge/archive); single-owner, NOT the SoR
 │   ├── outputs/                   # event emitters / writers (output contracts)
 │   ├── gates/                     # human decision points
 │   ├── observability/             # metrics, logs, traces
@@ -61,9 +62,9 @@ Practical payoff: a new front does **not** reinvent lifecycle, healthcheck, cont
     └── healthcheck.py
 ```
 
-Each `src/<module>` subpackage maps **1:1 to a builder step**. A front fills the directories that characterize it densely and leaves the rest thin (e.g., a `collector` front has rich `collectors/` and empty `gates/`; a `gateway` front has rich `inputs/` + `outputs/` + `collectors/` (the channel) + a consent gate in `processors/`, but empty `gates/`; a `hub` front has rich `outputs/` + `gates/`; an `agent` front has rich `processors/` + `llm/`).
+Each `src/<module>` subpackage maps **1:1 to a builder step**. A front fills the directories that characterize it densely and leaves the rest thin (e.g., a `collector` front has rich `collectors/` and empty `gates/`; a `gateway` front has rich `inputs/` + `outputs/` + `collectors/` (the channel) + a consent gate in `processors/`, but empty `gates/`; a `retriever` / `sink` front has a rich `store/`; a `hub` front has rich `outputs/` + `gates/`; an `agent` front has rich `processors/` + `llm/`).
 
-Concretely, across domains: a `collector` is a metrics shipper / price poller / scraping enricher; a `gateway` owns an outbound email/SMS/push channel with an opt-in gate; a `hub` is the single writer to an order DB / ledger / provisioning system; an `agent` is a ticket-triage / PR-review / document-analysis proposer. An LLM-judge, a router, and a multi-agent supervisor are `agent`/`processors` use-cases, not new recipes (see §7).
+Concretely, across domains: a `collector` is a metrics shipper / price poller / scraping enricher; a `gateway` owns an outbound email/SMS/push channel with an opt-in gate; a `retriever` owns a vector index and serves RAG context; a `sink` archives events into a data lake / audit log; a `hub` is the single writer to an order DB / ledger / provisioning system; an `agent` is a ticket-triage / PR-review / document-analysis proposer; an `api` is a synchronous (request/response) inference or BFF endpoint; a `scheduler` is a cron/SLA-watchdog/heartbeat that emits on a timer. An LLM-judge, a router, and a multi-agent supervisor are `agent`/`processors` use-cases, not new recipes (see §7).
 
 ---
 
@@ -83,10 +84,12 @@ class AIFront:
     llm_adapter: object | None = None                 # provider-agnostic; self-hostable first
     outputs: list = field(default_factory=list)       # emitters / writers
     gates: list = field(default_factory=list)         # human decision points
+    store: object | None = None                       # owned operational store; NOT the system of record
     observability: object | None = None
 
     def healthcheck(self) -> bool: ...
-    def run(self) -> None: ...                         # standardized lifecycle
+    def run(self) -> None: ...                         # event-driven lifecycle
+    def serve(self) -> None: ...                       # synchronous request/response lifecycle (api/bff)
 
 
 # src/<module>/front/builder.py  (interface; each front implements its own)
@@ -101,6 +104,8 @@ class AIFrontBuilder(ABC):
     def with_input_contracts(self) -> "AIFrontBuilder": ...
     @abstractmethod
     def with_collectors(self) -> "AIFrontBuilder": ...
+    @abstractmethod
+    def with_store(self) -> "AIFrontBuilder": ...
     @abstractmethod
     def with_processors(self) -> "AIFrontBuilder": ...
     @abstractmethod
@@ -145,6 +150,22 @@ class FrontDirector:
         # Note: processors BEFORE collectors — the inverse of `collector`'s ingress-first
         # order. The sequence itself enforces "gate before egress" (invariant 7).
 
+    def build_retriever_front(self) -> "AIFront":   # owns a vector/knowledge store; serves RAG context
+        self._base()
+        self._b.with_input_contracts()
+        self._b.with_llm_adapter()                  # embeddings (+ optional generation)
+        self._b.with_store()                        # the owned vector/knowledge store
+        self._b.with_processors()                   # chunking / re-ranking / formatting
+        self._b.with_output_contracts()
+        return self._b.build()
+
+    def build_sink_front(self) -> "AIFront":        # terminal; persists to a secondary (non-SoR) store
+        self._base()
+        self._b.with_input_contracts()
+        self._b.with_processors()                   # validate / normalize / partition
+        self._b.with_store()                        # the owned archive / data-lake store
+        return self._b.build()                      # NOTE: no output_contracts — terminal, emits nothing
+
     def build_hub_front(self) -> "AIFront":         # single writer to the system of record
         self._base()
         self._b.with_input_contracts()
@@ -160,6 +181,20 @@ class FrontDirector:
         self._b.with_processors()
         self._b.with_output_contracts()
         return self._b.build()
+
+    def build_api_front(self) -> "AIFront":         # synchronous request/response (serve, not run)
+        self._base()
+        self._b.with_input_contracts()              # request schema / endpoints
+        self._b.with_processors()                   # auth / validation / routing
+        self._b.with_llm_adapter()                  # reason (inference / RAG-backed)
+        self._b.with_output_contracts()             # response schema
+        return self._b.build()                      # the client drives this front with serve()
+
+    def build_scheduler_front(self) -> "AIFront":   # clock-triggered emitter (no input contracts)
+        self._base()
+        self._b.with_processors()                   # evaluate schedules / SLAs / due items per tick
+        self._b.with_output_contracts()
+        return self._b.build()                      # NOTE: no input_contracts — the trigger is the clock
 ```
 
 ```python
@@ -168,7 +203,7 @@ from .front.builder import ConcreteFrontBuilder
 from .front.director import FrontDirector
 
 front = FrontDirector(ConcreteFrontBuilder()).build_collector_front()
-front.run()
+front.run()      # event-driven recipes; an `api` front is driven by front.serve() instead
 ```
 
 > **Rule:** steps always run in the director's order. `with_config` and `with_observability` are mandatory in every recipe. A front that does not need a step (e.g., a collector with no human gates) simply omits it from the recipe — it does not implement an empty step with side effects.
@@ -184,6 +219,7 @@ front.run()
 5. **No secrets in the repo.** `config/` holds only _references_ to secrets; values live in a secret manager. CI fails if a secret is detected.
 6. **Idempotency.** Event consumers are idempotent (natural key, e.g. `event_id`). Reprocessing causes no duplicate effect.
 7. **Single channel owner.** Each external egress channel (messaging, email, telephony, …) is owned by exactly one `gateway` front, which enforces an eligibility/consent gate **before** any outbound message and emits status events. No other front holds that channel's credentials. Like the hub's single-writer rule, this keeps an external side effect funneled through one auditable boundary.
+8. **Single owner per operational store.** A `store/` (vector index, knowledge base, data lake, audit log) is owned by exactly one front (`retriever` reads/writes it; `sink` writes it). It is **not** the system of record — invariant 1 still applies, and only the `hub` writes that. No other front holds write credentials to someone else's store; cross-front access goes through events/contracts, never a shared connection.
 
 ---
 
