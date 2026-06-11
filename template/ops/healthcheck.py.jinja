@@ -1,4 +1,13 @@
-"""Container healthcheck: exits 0 if the front assembles and is healthy."""
+"""Container healthcheck: exits 0 if the front is healthy, 1 otherwise.
+
+Default (no args) = LIVENESS — the front assembles and is wired. Used by the
+Docker HEALTHCHECK and the k8s livenessProbe.
+
+`--readiness` = READINESS — liveness plus the front's external dependencies
+(Redis reachable, contracts loaded, ...). Wire it to the k8s readinessProbe:
+    python ops/healthcheck.py --readiness
+"""
+import argparse
 import sys
 
 try:
@@ -8,9 +17,18 @@ except Exception:  # pragma: no cover
     sys.exit(1)
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="AI Front healthcheck")
+    parser.add_argument(
+        "--readiness",
+        action="store_true",
+        help="check external dependencies (readinessProbe), not just liveness",
+    )
+    args = parser.parse_args(argv)
     try:
-        return 0 if build().healthcheck() else 1
+        front = build()
+        ok = front.readiness() if args.readiness else front.healthcheck()
+        return 0 if ok else 1
     except Exception:
         return 1
 

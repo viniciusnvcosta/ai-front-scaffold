@@ -1,0 +1,23 @@
+"""ops/healthcheck.py exposes liveness (default) and readiness (--readiness) modes.
+
+Driven as a subprocess the way the container/k8s probes invoke it. The default
+generated front has no failing dependency probes, so both modes exit 0.
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "ops" / "healthcheck.py"
+ENV = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+
+
+def test_liveness_exits_zero():
+    result = subprocess.run([sys.executable, str(SCRIPT)], cwd=ROOT, env=ENV)
+    assert result.returncode == 0
+
+
+def test_readiness_exits_zero():
+    result = subprocess.run([sys.executable, str(SCRIPT), "--readiness"], cwd=ROOT, env=ENV)
+    assert result.returncode == 0
