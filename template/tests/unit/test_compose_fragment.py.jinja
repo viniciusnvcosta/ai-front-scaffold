@@ -1,0 +1,25 @@
+"""ops/compose.fragment.yml shape. The `gateway` recipe ships one image as two
+deployables (api + worker) distinguished by APP_ROLE; every other recipe emits a
+single service. Asserted by text so the test needs no YAML dependency (zero-dep).
+"""
+from pathlib import Path
+
+FRAGMENT = Path(__file__).resolve().parents[2] / "ops" / "compose.fragment.yml"
+
+
+def test_fragment_exists():
+    assert FRAGMENT.is_file()
+
+{% if recipe == 'gateway' %}
+def test_gateway_emits_api_and_worker_services():
+    text = FRAGMENT.read_text()
+    assert "{{ project_slug }}-api:" in text
+    assert "{{ project_slug }}-worker:" in text
+    assert "APP_ROLE: api" in text
+    assert "APP_ROLE: worker" in text
+{% else %}
+def test_single_service_without_app_role():
+    text = FRAGMENT.read_text()
+    assert "{{ project_slug }}:" in text
+    assert "APP_ROLE: worker" not in text
+{% endif %}

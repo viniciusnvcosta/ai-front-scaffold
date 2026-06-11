@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import logging
+{%- if recipe == 'gateway' %}
+import os
+{%- endif %}
 
 from .front.builder import {{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder
 from .front.director import FrontDirector
@@ -16,7 +19,13 @@ def build():
 
 def main() -> None:
     front = build()
-{%- if recipe == 'api' %}
+{%- if recipe == 'gateway' %}
+    # One image, two deployables: APP_ROLE selects the process this container runs.
+    # `api` answers requests (serve); anything else (default `worker`) runs the
+    # event-driven worker loop. ops/compose.fragment.yml emits both services.
+    role = os.getenv("APP_ROLE", "worker")
+    front.serve() if role == "api" else front.run()
+{%- elif recipe == 'api' %}
     front.serve()   # synchronous request/response lifecycle
 {%- else %}
     front.run()     # event-driven lifecycle

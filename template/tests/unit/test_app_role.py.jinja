@@ -1,0 +1,55 @@
+"""main() lifecycle dispatch. The `gateway` recipe is one image / two deployables
+selected by APP_ROLE (api -> serve, else worker -> run); every other recipe has a
+fixed lifecycle and ignores APP_ROLE. build() is patched to a recorder so the test
+asserts which lifecycle main() drove, without assembling a real front.
+"""
+import pytest
+
+from {{ module_name }} import main as main_mod
+
+
+class _Recorder:
+    def __init__(self) -> None:
+        self.called: list[str] = []
+
+    def run(self) -> None:
+        self.called.append("run")
+
+    def serve(self) -> None:
+        self.called.append("serve")
+
+
+@pytest.fixture
+def recorder(monkeypatch):
+    rec = _Recorder()
+    monkeypatch.setattr(main_mod, "build", lambda: rec)
+    return rec
+
+{% if recipe == 'gateway' %}
+def test_gateway_api_role_serves(recorder, monkeypatch):
+    monkeypatch.setenv("APP_ROLE", "api")
+    main_mod.main()
+    assert recorder.called == ["serve"]
+
+
+def test_gateway_worker_role_runs(recorder, monkeypatch):
+    monkeypatch.setenv("APP_ROLE", "worker")
+    main_mod.main()
+    assert recorder.called == ["run"]
+
+
+def test_gateway_defaults_to_worker(recorder, monkeypatch):
+    monkeypatch.delenv("APP_ROLE", raising=False)
+    main_mod.main()
+    assert recorder.called == ["run"]
+{% elif recipe == 'api' %}
+def test_api_always_serves(recorder, monkeypatch):
+    monkeypatch.setenv("APP_ROLE", "worker")  # non-gateway: ignored
+    main_mod.main()
+    assert recorder.called == ["serve"]
+{% else %}
+def test_event_driven_always_runs(recorder, monkeypatch):
+    monkeypatch.setenv("APP_ROLE", "api")  # non-gateway: ignored
+    main_mod.main()
+    assert recorder.called == ["run"]
+{% endif %}

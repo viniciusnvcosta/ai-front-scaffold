@@ -1,5 +1,24 @@
 # Merged into the platform layer's docker-compose. Defines this front only.
 services:
+{%- if recipe == 'gateway' %}
+  # One image, two deployables: APP_ROLE selects the process (see src/{{ module_name }}/main.py).
+  {{ project_slug }}-api:
+    build: .
+    env_file: [.env]
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      APP_ROLE: api
+    depends_on: []
+    restart: unless-stopped
+  {{ project_slug }}-worker:
+    build: .
+    env_file: [.env]
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      APP_ROLE: worker
+    depends_on: []
+    restart: unless-stopped
+{%- else %}
   {{ project_slug }}:
     build: .
     env_file: [.env]
@@ -7,3 +26,4 @@ services:
       APP_ENV: ${APP_ENV:-dev}
     depends_on: []
     restart: unless-stopped
+{%- endif %}
