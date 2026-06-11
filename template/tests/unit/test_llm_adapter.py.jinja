@@ -5,10 +5,13 @@ selecting `anthropic` constructs the adapter without importing the SDK (the
 import is lazy, in _client_lazy), and the unknown-provider guard. The langchain
 path is not exercised here because it imports langchain at build time.
 """
+import types
+
 import pytest
 
 from {{ module_name }}.llm.adapter import (
     AnthropicAdapter,
+    LangChainAdapter,
     SelfHostedAdapter,
     build_llm_adapter,
 )
@@ -30,3 +33,94 @@ def test_unknown_provider_raises(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "bogus")
     with pytest.raises(ValueError):
         build_llm_adapter()
+
+
+# --- provider selection is env-driven; these pin the dispatch knobs ---
+
+def test_provider_selection_is_case_insensitive(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "Anthropic")
+    assert isinstance(build_llm_adapter(), AnthropicAdapter)
+
+
+def test_self_hosted_base_url_env_override(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "self_hosted")
+    monkeypatch.setenv("LLM_BASE_URL", "http://vllm.internal:9000/v1")
+    assert build_llm_adapter().base_url == "http://vllm.internal:9000/v1"
+
+
+def test_anthropic_model_env_override(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_MODEL", "claude-sonnet-4-6")
+    assert build_llm_adapter().model == "claude-sonnet-4-6"
+
+
+# --- .complete() request construction, exercised with stub clients (no SDKs) ---
+
+def test_anthropic_complete_builds_request_and_extracts_text():
+    """system passes through; json_schema becomes output_config; text block is returned."""
+    captured = {}
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            block = types.SimpleNamespace(type="text", text="hello")
+            return types.SimpleNamespace(content=[block])
+
+    adapter = AnthropicAdapter(model="claude-opus-4-8", max_tokens=1234)
+    adapter._client = types.SimpleNamespace(messages=FakeMessages())  # skip lazy SDK import
+
+    out = adapter.complete("hi", system="be brief", json_schema={"type": "object"})
+
+    assert out == "hello"
+    assert captured["model"] == "claude-opus-4-8"
+    assert captured["max_tokens"] == 1234
+    assert captured["system"] == "be brief"
+    assert captured["messages"] == [{"role": "user", "content": "hi"}]
+    # current SDK structured-output shape: output_config.format.json_schema
+    assert captured["output_config"] == {
+        "format": {"type": "json_schema", "schema": {"type": "object"}}
+    }
+
+
+def test_anthropic_complete_omits_optional_kwargs_when_unset():
+    captured = {}
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text="x")])
+
+    adapter = AnthropicAdapter()
+    adapter._client = types.SimpleNamespace(messages=FakeMessages())
+
+    adapter.complete("hi")
+    assert "system" not in captured
+    assert "output_config" not in captured
+
+
+def test_langchain_complete_prepends_system_and_returns_content():
+    captured = {}
+
+    class FakeModel:
+        def invoke(self, messages):
+            captured["messages"] = messages
+            return types.SimpleNamespace(content="answer")
+
+    out = LangChainAdapter(FakeModel()).complete("hi", system="sys")
+
+    assert out == "answer"
+    assert captured["messages"] == [("system", "sys"), ("human", "hi")]
+
+
+def test_langchain_complete_json_schema_returns_serialized_json():
+    class Structured:
+        def invoke(self, messages):
+            return {"name": "ok"}
+
+    class FakeModel:
+        def with_structured_output(self, schema):
+            assert schema == {"type": "object"}
+            return Structured()
+
+    out = LangChainAdapter(FakeModel()).complete("hi", json_schema={"type": "object"})
+    assert out == '{"name": "ok"}'
