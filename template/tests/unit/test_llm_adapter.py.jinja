@@ -1,0 +1,32 @@
+"""The adapter dispatch must work without any optional provider SDK installed.
+
+These cover only the dependency-free paths: the self-hosted default, that
+selecting `anthropic` constructs the adapter without importing the SDK (the
+import is lazy, in _client_lazy), and the unknown-provider guard. The langchain
+path is not exercised here because it imports langchain at build time.
+"""
+import pytest
+
+from {{ module_name }}.llm.adapter import (
+    AnthropicAdapter,
+    SelfHostedAdapter,
+    build_llm_adapter,
+)
+
+
+def test_default_provider_is_self_hosted(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    assert isinstance(build_llm_adapter(), SelfHostedAdapter)
+
+
+def test_anthropic_provider_constructs_without_sdk(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    adapter = build_llm_adapter()
+    assert isinstance(adapter, AnthropicAdapter)
+    assert adapter.model == "claude-opus-4-8"  # built without importing `anthropic`
+
+
+def test_unknown_provider_raises(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "bogus")
+    with pytest.raises(ValueError):
+        build_llm_adapter()
