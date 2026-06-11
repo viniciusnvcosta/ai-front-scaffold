@@ -37,6 +37,22 @@ just update      # == uvx copier update --trust
 the changes into the existing repo — including updates to `CLAUDE.base.md`. This is
 the key capability cookiecutter lacks (it only produces a one-time snapshot).
 
+### Versioning & pinning
+
+Releases are **SemVer git tags** on `main`; see [`CHANGELOG.md`](./CHANGELOG.md).
+**`v0.2.0`** is the first stable tag (eight recipes + pluggable LLM adapter +
+containerization) — the version generated repos should pin and update against.
+
+A generated repo records the template version it was rendered from in
+`.copier-answers.yml`. `just update` re-targets the **latest tag** and three-way
+-merges the diff, so each front adopts "from base" improvements (e.g. graceful
+shutdown, readiness probes — `v0.3.0`) deliberately, reviewing the changes before
+merging. To pin a specific version explicitly:
+
+```bash
+uvx copier update --trust --vcs-ref v0.2.0
+```
+
 ## Stack decision (reviewed)
 
 | Concern            | Choice                                           | Why                                                                                                                                                       |

@@ -87,9 +87,13 @@ class AIFront:
     store: object | None = None                       # owned operational store; NOT the system of record
     observability: object | None = None
 
-    def healthcheck(self) -> bool: ...
-    def run(self) -> None: ...                         # event-driven lifecycle
+    def healthcheck(self) -> bool: ...                 # liveness: assembled + wired
+    def readiness(self) -> bool: ...                   # readiness: liveness + deps reachable (k8s readinessProbe)
+    def run(self) -> None: ...                         # event-driven lifecycle (graceful stop on SIGTERM/SIGINT)
     def serve(self) -> None: ...                       # synchronous request/response lifecycle (api/bff)
+    def request_stop(self) -> None: ...                # signal a clean wind-down
+    def is_stopping(self) -> bool: ...                 # concrete loops poll this
+    def shutdown(self) -> None: ...                    # close owned resources, idempotent
 
 
 # src/<module>/front/builder.py  (interface; each front implements its own)
@@ -220,6 +224,8 @@ front.run()      # event-driven recipes; an `api` front is driven by front.serve
 6. **Idempotency.** Event consumers are idempotent (natural key, e.g. `event_id`). Reprocessing causes no duplicate effect.
 7. **Single channel owner.** Each external egress channel (messaging, email, telephony, …) is owned by exactly one `gateway` front, which enforces an eligibility/consent gate **before** any outbound message and emits status events. No other front holds that channel's credentials. Like the hub's single-writer rule, this keeps an external side effect funneled through one auditable boundary.
 8. **Single owner per operational store.** A `store/` (vector index, knowledge base, data lake, audit log) is owned by exactly one front (`retriever` reads/writes it; `sink` writes it). It is **not** the system of record — invariant 1 still applies, and only the `hub` writes that. No other front holds write credentials to someone else's store; cross-front access goes through events/contracts, never a shared connection.
+
+> **Metrics for batch fronts.** A long-lived front exposes `/metrics` for Prometheus to scrape. A **batch/short-lived** front (`collector`, `scheduler`, or any process that runs and exits) has no stable endpoint to scrape — a static scrape target for it sits permanently **DOWN**. Such fronts must instead **push** to a **Pushgateway**, or expose an **ephemeral** `/metrics` only for the duration of a run. Do not register a standing Prometheus scrape target against a batch front.
 
 ---
 
