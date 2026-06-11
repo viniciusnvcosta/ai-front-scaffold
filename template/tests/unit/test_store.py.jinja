@@ -1,0 +1,29 @@
+"""The owned-store adapter must build dependency-free with a self-hostable default.
+
+Mirrors test_llm_adapter: build_store() picks the self-hosted backend and honors
+STORE_DSN, without importing any external store client (those are wired later in
+SelfHostedStore.upsert/query, which raise NotImplementedError until then).
+"""
+import pytest
+
+from {{ module_name }}.store import SelfHostedStore, build_store
+
+
+def test_build_store_defaults_to_self_hosted(monkeypatch):
+    monkeypatch.delenv("STORE_DSN", raising=False)
+    store = build_store()
+    assert isinstance(store, SelfHostedStore)
+    assert store.dsn == "postgresql://localhost:5432/store"
+
+
+def test_store_dsn_env_override(monkeypatch):
+    monkeypatch.setenv("STORE_DSN", "qdrant://example:6333/coll")
+    assert build_store().dsn == "qdrant://example:6333/coll"
+
+
+def test_self_hosted_store_is_a_stub_until_wired():
+    store = SelfHostedStore("postgresql://localhost:5432/store")
+    with pytest.raises(NotImplementedError):
+        store.upsert("k", "v")
+    with pytest.raises(NotImplementedError):
+        store.query("q")

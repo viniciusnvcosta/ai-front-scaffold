@@ -1,0 +1,113 @@
+"""Each recipe's construction ORDER is the design thesis (see director docstrings).
+
+CI only checks that the *selected* recipe renders and its pytest passes; nothing
+guards the per-recipe step ordering the director documents. These tests lock it
+in by driving FrontDirector with a builder that records the call sequence, so a
+reordered recipe (or a step dropped/added) fails loudly here rather than silently
+changing the front's contract.
+
+Every recipe exists on the director regardless of the `recipe=` chosen at render
+time, so all eight are exercised from one generated project.
+"""
+import pytest
+
+from {{ module_name }}.front.director import FrontDirector
+
+
+class RecordingBuilder:
+    """Stands in for the concrete builder, recording the order of step calls."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __getattr__(self, name):
+        def record(*args, **kwargs):
+            self.calls.append(name)
+            return self  # builder steps are chainable; build()'s value is unused here
+        return record
+
+
+# Full expected call sequence per recipe, transcribed from FrontDirector.
+# _base() contributes reset -> with_config -> with_observability up front.
+EXPECTED = {
+    "collector": [
+        "reset", "with_config", "with_observability",
+        "with_input_contracts", "with_collectors", "with_processors",
+        "with_llm_adapter", "with_output_contracts", "build",
+    ],
+    "gateway": [
+        "reset", "with_config", "with_observability",
+        "with_input_contracts", "with_processors", "with_collectors",
+        "with_output_contracts", "build",
+    ],
+    "retriever": [
+        "reset", "with_config", "with_observability",
+        "with_input_contracts", "with_llm_adapter", "with_store",
+        "with_processors", "with_output_contracts", "build",
+    ],
+    "sink": [
+        "reset", "with_config", "with_observability",
+        "with_input_contracts", "with_processors", "with_store", "build",
+    ],
+    "hub": [
+        "reset", "with_config", "with_observability",
+        "with_input_contracts", "with_processors", "with_output_contracts",
+        "with_human_gates", "build",
+    ],
+    "agent": [
+        "reset", "with_config", "with_observability",
+        "with_input_contracts", "with_llm_adapter", "with_processors",
+        "with_output_contracts", "build",
+    ],
+    "api": [
+        "reset", "with_config", "with_observability",
+        "with_input_contracts", "with_processors", "with_llm_adapter",
+        "with_output_contracts", "build",
+    ],
+    "scheduler": [
+        "reset", "with_config", "with_observability",
+        "with_processors", "with_output_contracts", "build",
+    ],
+}
+
+
+@pytest.mark.parametrize("recipe", sorted(EXPECTED))
+def test_recipe_construction_order(recipe):
+    builder = RecordingBuilder()
+    getattr(FrontDirector(builder), f"build_{recipe}_front")()
+    assert builder.calls == EXPECTED[recipe]
+
+
+# Named invariants — these are the claims the director docstrings make, asserted
+# directly so a regression reads as a broken design rule, not just a diff.
+
+def _steps(recipe):
+    builder = RecordingBuilder()
+    getattr(FrontDirector(builder), f"build_{recipe}_front")()
+    return builder.calls
+
+
+def test_gateway_gates_before_egress():
+    """processors (the consent/eligibility gate) MUST precede collectors (egress)."""
+    steps = _steps("gateway")
+    assert steps.index("with_processors") < steps.index("with_collectors")
+
+
+def test_retriever_store_sits_between_llm_and_processors():
+    steps = _steps("retriever")
+    assert (
+        steps.index("with_llm_adapter")
+        < steps.index("with_store")
+        < steps.index("with_processors")
+    )
+
+
+def test_sink_is_terminal_persisting_with_no_emit():
+    """The only recipe that ends in with_store and omits output contracts."""
+    steps = _steps("sink")
+    assert steps[-2:] == ["with_store", "build"]
+    assert "with_output_contracts" not in steps
+
+
+def test_scheduler_is_clock_triggered_with_no_input_contracts():
+    assert "with_input_contracts" not in _steps("scheduler")

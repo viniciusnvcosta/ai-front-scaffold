@@ -6,6 +6,14 @@ description = "{{ description }}"
 {% endif %}requires-python = ">={{ python_version }}"
 dependencies = []
 
+# Opt-in LLM providers (CLAUDE.base.md #3): the default self-hosted path needs
+# none of these. Install only the one you select via LLM_PROVIDER, e.g.
+#   uv sync --extra anthropic     # LLM_PROVIDER=anthropic
+#   uv sync --extra langchain     # LLM_PROVIDER=langchain (+ a provider pkg)
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40"]
+langchain = ["langchain>=0.3"]  # add the integration pkg for your model, e.g. langchain-ollama / langchain-anthropic
+
 [project.scripts]
 {{ module_name }} = "{{ module_name }}.main:main"
 

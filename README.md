@@ -58,16 +58,16 @@ non-SoR operational store) · `processors` (validate/normalize/score/route) · `
 (reason) · `output` (emit events) · `gates` (human approval). Event-driven recipes run
 via `AIFront.run()`; the `api` recipe is synchronous and runs via `AIFront.serve()`.
 
-| Recipe      | Assembly order (after base)                        | Lifecycle | Writes to system of record? |
-| ----------- | -------------------------------------------------- | --------- | --------------------------- |
-| `collector` | input → **collectors → processors** → llm → output | `run`     | no                          |
-| `gateway`   | input → **processors → collectors** → output       | `run`     | no                          |
-| `retriever` | input → llm → **store** → processors → output      | `run`     | no                          |
-| `sink`      | input → processors → **store** (terminal, no emit) | `run`     | no                          |
-| `hub`       | input → processors → output → **gates**            | `run`     | yes (the only one)          |
-| `agent`     | input → **llm → processors** → output              | `run`     | no                          |
-| `api`       | input → **processors → llm** → output              | `serve`   | no                          |
-| `scheduler` | **processors → output** (no input; clock-triggered)| `run`     | no                          |
+| Recipe      | Assembly order (after base)                         | Lifecycle | Writes to system of record? |
+| ----------- | --------------------------------------------------- | --------- | --------------------------- |
+| `collector` | input → **collectors → processors** → llm → output  | `run`     | no                          |
+| `gateway`   | input → **processors → collectors** → output        | `run`     | no                          |
+| `retriever` | input → llm → **store** → processors → output       | `run`     | no                          |
+| `sink`      | input → processors → **store** (terminal, no emit)  | `run`     | no                          |
+| `hub`       | input → processors → output → **gates**             | `run`     | yes (the only one)          |
+| `agent`     | input → **llm → processors** → output               | `run`     | no                          |
+| `api`       | input → **processors → llm** → output               | `serve`   | no                          |
+| `scheduler` | **processors → output** (no input; clock-triggered) | `run`     | no                          |
 
 No two recipes share an order — that's what makes each a real recipe rather than a
 rename. A few are deliberate mirror images: `collector` is **ingress-first** (collect,

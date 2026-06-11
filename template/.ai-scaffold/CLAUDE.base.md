@@ -214,7 +214,7 @@ front.run()      # event-driven recipes; an `api` front is driven by front.serve
 
 1. **Single writer to the system of record.** Only the `hub` front writes to the shared system of record. Other fronts emit events/proposals and never hold write credentials to it.
 2. **Contracts first, versioned.** All inter-front communication goes through a versioned schema in `contracts/` (sourced from the platform layer). Changing a contract = PR + version bump. Contract tests are mandatory.
-3. **Provider-agnostic LLM, self-hostable first.** LLM access sits behind an adapter. Default to a self-hostable open model; an external API is an isolated fallback, never a hard dependency.
+3. **Provider-agnostic LLM, self-hostable first.** LLM access sits behind the `LLMAdapter` protocol in `llm/adapter.py`. The provider is a runtime choice (`LLM_PROVIDER`: `self_hosted` default | `anthropic` | `langchain`); external SDKs are **lazy-imported** and ship as **optional extras**, so importing the module never pulls in `anthropic`/`langchain` and the default self-hosted path has zero external deps. An external API is an isolated, opt-in fallback, never a hard dependency.
 4. **Risk gates are always human.** Irreversible or high-impact actions are routed through a human gate, never auto-executed.
 5. **No secrets in the repo.** `config/` holds only _references_ to secrets; values live in a secret manager. CI fails if a secret is detected.
 6. **Idempotency.** Event consumers are idempotent (natural key, e.g. `event_id`). Reprocessing causes no duplicate effect.
