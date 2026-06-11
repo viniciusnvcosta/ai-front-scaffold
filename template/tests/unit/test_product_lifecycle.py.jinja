@@ -1,0 +1,88 @@
+"""Lifecycle contract for the base AIFront: graceful shutdown + readiness.
+
+These are "from base" guarantees (CLAUDE.base.md): every front, whatever its
+recipe, must stop cleanly on SIGTERM/SIGINT (k8s rolling update) and answer a
+readiness probe distinct from liveness. Constructed directly (no builder) so
+the contract is exercised identically under every rendered recipe.
+"""
+import signal
+
+import pytest
+
+from {{ module_name }}.front.product import AIFront
+
+
+@pytest.fixture(autouse=True)
+def _restore_signal_handlers():
+    """Lifecycle tests install real signal handlers; restore them after each."""
+    saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+    yield
+    for s, handler in saved.items():
+        signal.signal(s, handler)
+
+
+class _Resource:
+    """Stand-in for an owned resource (Redis/HTTP client, store, ...)."""
+
+    def __init__(self, ready: bool = True) -> None:
+        self.closed = 0
+        self._ready = ready
+
+    def close(self) -> None:
+        self.closed += 1
+
+    def ready(self) -> bool:
+        return self._ready
+
+
+def test_request_stop_flips_is_stopping():
+    front = AIFront(name="t")
+    assert front.is_stopping() is False
+    front.request_stop()
+    assert front.is_stopping() is True
+
+
+def test_shutdown_closes_resources_idempotently():
+    front = AIFront(name="t")
+    out, store = _Resource(), _Resource()
+    front.outputs.append(out)
+    front.store = store
+    front.processors.append(object())  # no close(): skipped, not a crash
+    front.shutdown()
+    front.shutdown()  # idempotent — must not double-close
+    assert out.closed == 1
+    assert store.closed == 1
+
+
+def test_run_returns_and_closes_when_prestopped():
+    front = AIFront(name="t")
+    out = _Resource()
+    front.outputs.append(out)
+    front.request_stop()  # pre-signal so _stop.wait() returns immediately
+    front.run()  # must not block
+    assert out.closed == 1
+
+
+def test_sigterm_handler_triggers_graceful_stop():
+    front = AIFront(name="t")
+    front._install_signal_handlers()
+    handler = signal.getsignal(signal.SIGTERM)
+    assert callable(handler)
+    handler(signal.SIGTERM, None)  # simulate k8s teardown
+    assert front.is_stopping() is True
+
+
+def test_readiness_defaults_to_healthcheck_when_no_deps():
+    # A front with no probing resources is ready as soon as it is live, so the
+    # default generated project stays ready out of the box.
+    assert AIFront(name="t").readiness() is True
+
+
+def test_readiness_reflects_dependency_probes():
+    ready = AIFront(name="t")
+    ready.outputs.append(_Resource(ready=True))
+    assert ready.readiness() is True
+
+    not_ready = AIFront(name="t")
+    not_ready.outputs.append(_Resource(ready=False))
+    assert not_ready.readiness() is False
