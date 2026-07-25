@@ -54,18 +54,49 @@ current ones adopt it deliberately via `just update`.
   steps went unexercised (`scheduler` measured 89.89% before this test). All
   eight recipes now clear the gate with margin (91.7-91.8%).
 
+### Fixed
+- **Generated-project skeleton made lint-clean, and `ruff` pinned to stay that
+  way.** This release is what turns `just lint` into a blocking CI gate (via
+  `just check`, run by the new `azure-pipelines.yml` Gate stage), so the
+  scaffold's own pre-existing rule drift — `ruff>=0.6` had quietly resolved to
+  0.16.0, whose newer default ruleset flagged 25 findings across
+  `ops/healthcheck.py`, `front/builder.py`, `front/product.py`,
+  `observability/__init__.py`, and `tests/unit/test_healthcheck_modes.py` —
+  would otherwise have shipped as a day-one failure on every new front. Fixed
+  in the skeleton, not suppressed:
+  - `front/builder.py.jinja` / `observability/__init__.py`: 19×`UP037`
+    (unneeded quoted forward refs now that `from __future__ import
+    annotations` is in effect) — quotes dropped.
+  - `ops/healthcheck.py.jinja`: the import guard now catches `ImportError`
+    specifically (that's the one real failure mode of "module name is
+    templated; if import path differs, treat as unhealthy" — no longer a
+    blind `except Exception`); the now-unnecessary `# noqa: F401` on that
+    import is gone (`build` is used lower down, so nothing was ever
+    unused — `RUF100`); the outer `except Exception` in `main()` is a
+    deliberate last-resort process boundary (this script's entire contract is
+    "any failure ⇒ unhealthy"), kept broad but now paired with
+    `log.exception(...)` — ruff's own documented exemption for blind excepts
+    that log with `exc_info` — instead of silently swallowing the traceback.
+  - `front/product.py`: `readiness()`'s per-resource probe catch mirrors the
+    same, already-established pattern one function below it in this file
+    (`shutdown()`'s resource-close loop) — `log.exception(...)` instead of
+    `log.warning(...)`, satisfying the identical ruff exemption instead of
+    guessing at a narrower exception type for an arbitrary duck-typed
+    `ready()`/`ping()` probe.
+  - `tests/unit/test_healthcheck_modes.py.jinja`: both `subprocess.run(...)`
+    calls gain explicit `check=False` (`PLW1510`) — correct as-is, since the
+    return code itself is the assertion, not an error signal.
+  - `pyproject.toml.jinja`: `ruff` pin narrowed to `>=0.16,<0.17` (the minor
+    verified clean above) so the ruleset can't silently drift again on a
+    future `uv sync`.
+
 ### Notes
 - Recipe construction order is unchanged; no builder steps or public
   signatures were altered.
-- The zero-dependency default project (`dependencies = []`) passes the new
-  `just test` (coverage-gated) and `just contracts` on all eight recipes —
-  verified by generating each and running both. `just lint` currently fails
-  on a freshly generated project independent of this release (ruff, pinned
-  here at `>=0.6`, resolves to 0.16.0 today and flags ~25 pre-existing
-  findings — e.g. `RUF100`/`BLE001`/`UP037` in `builder.py`/`product.py`/
-  `healthcheck.py` — that 0.3.0 already has; reproduced identically on a
-  vanilla `v0.3.0` render). Out of scope for this release; tracked as a
-  follow-up (pin an older ruff or fix the flagged lines).
+- `just check` (lint + coverage-gated test + contracts) is green on all eight
+  freshly generated recipes, including `scheduler` (the thinnest assembly
+  order) — verified by generating each from this tag and running `just
+  check` end to end (see report for full transcripts).
 
 ## [0.3.0]
 

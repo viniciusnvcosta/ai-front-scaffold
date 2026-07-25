@@ -8,11 +8,14 @@ Docker HEALTHCHECK and the k8s livenessProbe.
     python ops/healthcheck.py --readiness
 """
 import argparse
+import logging
 import sys
 
+log = logging.getLogger(__name__)
+
 try:
-    from {{ module_name }}.main import build  # noqa: F401
-except Exception:  # pragma: no cover
+    from {{ module_name }}.main import build
+except ImportError:  # pragma: no cover
     # module name is templated; if import path differs, treat as unhealthy
     sys.exit(1)
 
@@ -30,6 +33,12 @@ def main(argv=None) -> int:
         ok = front.readiness() if args.readiness else front.healthcheck()
         return 0 if ok else 1
     except Exception:
+        # Last-resort boundary: this script's whole contract is "any failure during
+        # assembly or the health check itself means unhealthy" — log it (full
+        # traceback, not just a message) so a failing probe is diagnosable, but
+        # never let it crash the container's healthcheck/probe with an
+        # unhandled traceback.
+        log.exception("healthcheck failed")
         return 1
 
 

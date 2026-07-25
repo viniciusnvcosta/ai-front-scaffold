@@ -11,5 +11,5 @@ class Observability:
         self.log = logging.getLogger(service)
 
 
-def build_observability(service: str) -> "Observability":
+def build_observability(service: str) -> Observability:
     return Observability(service)
