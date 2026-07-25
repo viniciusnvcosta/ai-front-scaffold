@@ -1,0 +1,29 @@
+"""Builder contract compliance (CLAUDE.base.md #3): a front that doesn't need a
+step still defines it — as a safe no-op — rather than leaving it unimplemented.
+This exercises every step directly on the Concrete Builder, independent of which
+steps THIS recipe's director actually calls, so steps unused by the chosen
+recipe (e.g. `with_store` on a non-`retriever`/`sink` front) stay covered and
+provably harmless to call.
+"""
+from {{ module_name }}.front.builder import {{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder
+
+
+def test_every_builder_step_is_a_safe_chainable_no_op():
+    builder = {{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder()
+    steps = (
+        "with_config",
+        "with_input_contracts",
+        "with_collectors",
+        "with_store",
+        "with_processors",
+        "with_llm_adapter",
+        "with_output_contracts",
+        "with_human_gates",
+        "with_observability",
+    )
+    for step in steps:
+        assert getattr(builder, step)() is builder
+
+    front = builder.build()
+    assert front is not None
+    assert front.name == "{{ project_slug }}"
