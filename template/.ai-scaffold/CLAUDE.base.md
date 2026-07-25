@@ -265,3 +265,45 @@ just update       # copier update — pull scaffold/base improvements into this 
 5. Write the project `README.md` (scope + roadmap + success criteria).
 6. Keep the root `CLAUDE.md` as a thin pointer (see the generated template).
 7. Later, run `just update` (i.e. `copier update`) to absorb scaffold improvements.
+
+---
+
+## 8. Delivery workflow & quality gates (mandatory)
+
+### Execution model (orchestrator + fresh subagents)
+
+| Role         | Model                    | Responsibility                                                       |
+| ------------ | ------------------------ | -------------------------------------------------------------------- |
+| Orchestrator | Fable 5                  | plan, dispatch tasks, run gates, adjudicate reviews, commit, ledger   |
+| Implementer  | fresh subagent per task  | sonnet for code; haiku for mechanical docs/config                     |
+| Reviewers    | fresh subagents per task | two-stage: (1) spec compliance, (2) code quality — both must approve  |
+
+- Process: `superpowers:subagent-driven-development`; implementation is TDD red→green
+  (`tdd` / `superpowers:test-driven-development`). No production code before a failing test.
+- Escalation: after 2 failed implementer attempts on a task, the orchestrator model takes it over.
+- Tasks come from the plan in `docs/plans/`; session state goes to the gitignored ledger,
+  durable outcomes to CHANGELOG / ADRs.
+
+### Gates — all must pass before a task is done
+
+| Gate      | Rule                                                                                                |
+| --------- | ---------------------------------------------------------------------------------------------------- |
+| Tests     | `just test` green, coverage ≥ 90% (`--cov-fail-under=90` in the justfile, never in pytest addopts)   |
+| Lint      | `just lint` clean (ruff + gitleaks)                                                                  |
+| Contracts | `just contracts` (fronts) / conftest + rego policy suite (platform)                                  |
+| Commits   | Conventional Commits; NO Co-Authored-By or any generated-with footer                                 |
+| Flow      | PR-based only (Azure DevOps; PR via web URL) — never commit to main/develop                          |
+
+### Docs layout (every repo)
+
+- `docs/adr/NNNN-slug.md` — decisions, indexed from README · `docs/plans/<version>-<slug>.md` — sprint plans
+- `CHANGELOG.md` — Keep a Changelog · `CONTEXT.md` + `docs/agents/` — glossary + agent-skill config
+  (see `## Agent skills` in CLAUDE.md)
+
+### Security review cadence
+
+| When                      | Action                                                       |
+| ------------------------- | ------------------------------------------------------------ |
+| before every PR / merge   | `differential-review` plugin on the branch diff              |
+| every release             | `insecure-defaults` audit                                    |
+| per release (CLI present) | `static-analysis:semgrep` sweep (`uv tool install semgrep`)  |
