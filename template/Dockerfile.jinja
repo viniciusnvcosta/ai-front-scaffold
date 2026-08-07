@@ -2,9 +2,39 @@
 FROM ghcr.io/astral-sh/uv:python{{ python_version }}-bookworm-slim
 
 WORKDIR /app
+
+# Dois `uv sync`, e a ordem é o ponto.
+#
+# A versão anterior deste template tinha UM sync ANTES do `COPY . .`, então ele
+# instalava só as dependências — o PROJETO nunca entrava no venv. O que escondia era
+# o `CMD ["uv", "run", ...]` abaixo: `uv run` sincroniza em runtime, instalando o
+# projeto e baixando da PyPI a CADA boot do container.
+#
+# Não é hipótese: o bug foi encontrado em PRODUÇÃO em três fronts gerados deste
+# template (`whatsapp-sales-agent`, `campaign-manager`, `bitrix-orchestrator`), e as
+# consequências eram todas reais:
+#
+#   * o container só sobe se a PyPI estiver acessível — dependência de rede externa
+#     num serviço que deveria falar apenas com suas próprias dependências;
+#   * `uv run` sincroniza o grupo DEFAULT, que inclui `dev`: a imagem "de produção"
+#     instalava ruff e pytest a cada início;
+#   * o artefato deixa de ser reproduzível. O mesmo digest resolve pacotes diferentes
+#     em dias diferentes — o que anula o sentido de pinar imagem por digest no IaC;
+#   * num dos fronts o defeito ficou INVISÍVEL até o `--no-dev` ser corrigido, e aí
+#     apareceu como crash-loop de 60s em produção: uma dependência de runtime estava
+#     classificada em `dev` e o sync de boot a instalava por acidente.
+#
+# 1º sync: só as dependências, para a camada ser cacheada quando apenas o código muda.
 COPY pyproject.toml uv.lock* ./
-RUN uv sync --frozen --no-dev || uv sync --no-dev
+RUN uv sync --frozen --no-dev --no-install-project || uv sync --no-dev --no-install-project
+
+# 2º sync: agora com o código presente, instala o PROJETO no venv.
 COPY . .
+RUN uv sync --frozen --no-dev || uv sync --no-dev
+
+# Com o venv completo, `uv run` não tem mais nada a sincronizar. Sem isto ele tentaria
+# de novo a cada invocação — inclusive no HEALTHCHECK, que roda a cada 30s.
+ENV UV_NO_SYNC=1
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD uv run python ops/healthcheck.py || exit 1

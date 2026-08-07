@@ -1,0 +1,160 @@
+"""Redação de credencial na saída de log.
+
+POR QUE ISTO EXISTE NO SCAFFOLD. Em 06/08/2026 um front gerado deste template teve a
+credencial de escrita do seu sistema de registro publicada em texto claro no
+CloudWatch, uma vez por requisição:
+
+    INFO:httpx:HTTP Request: POST https://<host>/rest/239/<TOKEN>/crm.item.update.json
+
+Quem tinha leitura no log group passava a ter escrita no sistema de registro — o que
+contorna o invariante de ESCRITOR ÚNICO (§4.1) por um caminho que nenhuma policy de IAM
+cobre. O log tinha 30 dias de retenção e uma cópia por chamada.
+
+A causa raiz não é a biblioteca HTTP: é a credencial viajar dentro da URL. Todo front
+que fale com um sistema externo tem alguma chance disso, então o mecanismo vive aqui e
+não em cada front.
+
+`Formatter`, não `Filter`. O caminho real é `log.warning("falhou: %s", exc)`: o segredo
+entra por `record.args`, NÃO por `record.msg`. E o traceback só existe DEPOIS da
+formatação. Um `Filter` que reescrevesse `record.msg` deixaria os dois passarem; o
+`Formatter` vê a string final e alcança os três.
+
+## O que é genérico e o que é do seu front
+
+Genérico (aqui): o mecanismo, e os padrões que valem para qualquer HTTP —
+`user:senha@host`, parâmetros de query com nome de segredo, e header `Authorization`.
+
+DO SEU FRONT: um segredo que viaje numa forma que só o seu provedor usa — por exemplo
+no PATH da URL, como o webhook do Bitrix (`/rest/<id>/<code>/`). Para esses há duas
+saídas, e a segunda é preferível:
+
+1. acrescente um padrão a `EXTRA_PATTERNS` no seu front;
+2. **registre o valor** com `register_secrets([...])` a partir da config — cobre
+   qualquer forma, inclusive um segredo logado solto (um dict de config, por exemplo),
+   que padrão nenhum pega.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import sys
+import traceback
+from collections.abc import Iterable
+
+__all__ = [
+    "EXTRA_PATTERNS",
+    "RedactingFormatter",
+    "install_log_redaction",
+    "redact",
+    "register_secrets",
+]
+
+_PLACEHOLDER = "***"
+
+# Piso de tamanho para segredo registrado por valor. Abaixo disso o valor casaria em
+# quase toda linha de log e destruiria a legibilidade sem proteger nada relevante.
+_MIN_SECRET_LEN = 8
+
+# Padrões UNIVERSAIS de HTTP. Cada um captura o prefixo em `\1` e substitui só o valor,
+# para o log continuar dizendo O QUE aconteceu.
+_PATTERNS: list[re.Pattern[str]] = [
+    # userinfo em URL: scheme://user:SENHA@host
+    re.compile(r"(://[^:/\s]+:)[^@/\s]+(?=@)"),
+    # parâmetro de query com nome de segredo
+    re.compile(
+        r"((?:token|api[_-]?key|apikey|password|passwd|secret|access[_-]?token|signature|sig)=)"
+        r"[^&\s\"']+",
+        re.IGNORECASE,
+    ),
+    # header Authorization (Bearer/Basic/qualquer esquema)
+    re.compile(r"(Authorization:\s*\S+\s+)\S+", re.IGNORECASE),
+]
+
+# Ponto de extensão do front. Acrescente `re.Pattern` com o prefixo a preservar em `\1`.
+# Exemplo de um hub cuja credencial vive no path:
+#     EXTRA_PATTERNS.append(re.compile(r"(/rest/\d+/)[^/\s\"']+"))
+EXTRA_PATTERNS: list[re.Pattern[str]] = []
+
+_secrets: set[str] = set()
+
+
+def register_secrets(values: Iterable[str | None]) -> None:
+    """Registra valores literais a redigir, além dos padrões.
+
+    Aceita `None`/vazio e IGNORA — casca de segredo não preenchida é caso real, e
+    `str.replace("", ...)` insere o placeholder entre TODOS os caracteres da linha.
+    """
+    for value in values:
+        if not value:
+            continue
+        candidate = value.strip()
+        if len(candidate) < _MIN_SECRET_LEN:
+            continue
+        _secrets.add(candidate)
+        # Um segredo costuma chegar embutido numa URL; o último segmento é o que pode
+        # aparecer solto em outra linha de log.
+        tail = candidate.rstrip("/").rsplit("/", 1)[-1]
+        if len(tail) >= _MIN_SECRET_LEN:
+            _secrets.add(tail)
+
+
+def redact(text: str) -> str:
+    """Devolve `text` sem credenciais conhecidas. Idempotente."""
+    out = text
+    for pattern in (*_PATTERNS, *EXTRA_PATTERNS):
+        if pattern.groups < 1:
+            out = pattern.sub(_PLACEHOLDER, out)
+        else:
+            out = pattern.sub(rf"\1{_PLACEHOLDER}", out)
+    # Maior primeiro: um segredo que seja prefixo de outro não deixa sobra.
+    for secret in sorted(_secrets, key=len, reverse=True):
+        out = out.replace(secret, _PLACEHOLDER)
+    return out
+
+
+class RedactingFormatter(logging.Formatter):
+    """Delega a formatação e redige o resultado.
+
+    Envolve o `Formatter` original em vez de substituí-lo: o formato configurado é
+    preservado, e a redação não vira uma decisão sobre layout de log.
+    """
+
+    def __init__(self, inner: logging.Formatter) -> None:
+        super().__init__()
+        self.inner = inner
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact(self.inner.format(record))
+
+
+def _redacting_excepthook(exc_type, exc, tb) -> None:
+    """Traceback de exceção NÃO TRATADA vai a stderr sem passar pelo `logging`."""
+    sys.stderr.write(redact("".join(traceback.format_exception(exc_type, exc, tb))))
+
+
+def install_log_redaction(level: int | str = logging.INFO) -> None:
+    """Instala a redação em todo o caminho de log. Idempotente.
+
+    Chame no IMPORT de `main.py` (cobre o que loga antes de a config existir) e de novo
+    em `main()`, já com `LOG_LEVEL` e os segredos registrados.
+    """
+    logging.basicConfig(level=level)
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    for handler in root.handlers:
+        current = handler.formatter
+        if isinstance(current, RedactingFormatter):
+            continue  # não empilhar: o custo por linha cresceria a cada chamada
+        handler.setFormatter(RedactingFormatter(current or logging.Formatter()))
+
+    # Camada de VOLUME. A linha INFO por requisição do cliente HTTP é onde a URL — e
+    # portanto qualquer credencial nela — aparece com mais frequência, e ela não dá
+    # diagnóstico que os logs da própria aplicação não dêem. `httpcore` entra junto
+    # porque em DEBUG ele loga a URL pelo seu próprio caminho.
+    for noisy in ("httpx", "httpcore", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    if sys.excepthook is not _redacting_excepthook:
+        sys.excepthook = _redacting_excepthook
