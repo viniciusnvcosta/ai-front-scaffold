@@ -103,7 +103,10 @@ def redact(text: str) -> str:
     """Devolve `text` sem credenciais conhecidas. Idempotente."""
     out = text
     for pattern in (*_PATTERNS, *EXTRA_PATTERNS):
-        out = pattern.sub(rf"\1{_PLACEHOLDER}", out)
+        if pattern.groups < 1:
+            out = pattern.sub(_PLACEHOLDER, out)
+        else:
+            out = pattern.sub(rf"\1{_PLACEHOLDER}", out)
     # Maior primeiro: um segredo que seja prefixo de outro não deixa sobra.
     for secret in sorted(_secrets, key=len, reverse=True):
         out = out.replace(secret, _PLACEHOLDER)
