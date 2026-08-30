@@ -29,10 +29,28 @@ repos on their next update; read the entry before running it.
   Measured at v0.5.0: 7 of 8 recipes `All checks passed`, `gateway` 1 error.
   Measured here: 8 of 8 clean, tests and `cold-install` green on all eight.
 
-  **This is the defect the scaffold's own CI was blind to:** `.github/workflows/ci.yml`
-  renders all eight recipes but runs only `uv run pytest`, never `ruff`,
-  `cold-install` or `just check` — so a lint regression in a single recipe ships
-  undetected. See `docs/plans/0.5.0-integrar-branches-e-publicar.md` R6.
+  **This is the defect the scaffold's own CI was blind to** — fixed in the same
+  release, see below.
+
+### Changed
+- **The scaffold's CI now runs the whole gate, not just `pytest`.**
+  `.github/workflows/ci.yml` rendered all eight recipes and ran `uv run pytest`,
+  never `ruff`, `cold-install` or `just check` — which is precisely how the
+  `gateway` lint regression above shipped in v0.5.0 with a green matrix. The
+  workflow now installs the pinned toolchain via the generated project's own
+  `tools/ci-install-tools.sh` (its first exercise anywhere) and runs
+  `just check` — the same command the generated front's PR Gate runs
+  (`template/azure-pipelines.yml`). The scaffold now proves the gate it promises
+  its children. Closes R6 of
+  `docs/plans/0.5.0-integrar-branches-e-publicar.md`.
+
+  Regression proof, run on `recipe=gateway`:
+
+  | Template | Workflow | Result |
+  | --- | --- | --- |
+  | v0.5.0 (defective) | new (`just check`) | **exit 1** — caught |
+  | v0.5.0 (defective) | old (`pytest`) | exit 0 — how it shipped |
+  | this release | new (`just check`) | exit 0 |
 
 ## [0.5.0]
 
