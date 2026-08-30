@@ -79,6 +79,20 @@ a hardening checklist.
   always used `\1`, so a front adding a pattern to `EXTRA_PATTERNS` without a
   capture group — an easy mistake — raised `re.error` and could break the logging
   path at runtime. Patterns with no group now replace the whole match.
+- **`LOG_LEVEL` is now honoured case-insensitively and never aborts the boot.**
+  The level string went straight to `logging.basicConfig`/`setLevel`, which raise
+  `ValueError` on anything but the canonical uppercase name — so `LOG_LEVEL=debug`
+  killed the process. Since the call happens in `main()` *after* `build()`, it
+  took down an already-assembled front: crash-loop. Values are now normalised
+  (case, surrounding space, numeric strings) and an unknown name degrades to INFO
+  with a warning. A wrong log level is never a reason for the service not to come
+  up. Note this is a live behaviour change relative to 0.4.0, where
+  `logging.basicConfig(level=logging.INFO)` ignored `LOG_LEVEL` entirely — fronts
+  that set it will now actually get that level.
+- **`just --list` is readable again.** `just` uses only the last contiguous
+  comment line above a recipe as its doc, so the rationale blocks on `test`,
+  `cold-install` and `check` rendered as mid-sentence fragments — in the recipe
+  that is every generated front's `default`.
 
 ### Migration
 - **Rebuild the image after `just update`.** The new `Dockerfile` produces a
