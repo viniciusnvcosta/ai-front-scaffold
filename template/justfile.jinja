@@ -28,8 +28,46 @@ lint:
     uv run ruff check .
     @command -v gitleaks >/dev/null && gitleaks detect --no-banner || echo "gitleaks not installed; skipping"
 
-# gate local/CI: lint + full coverage-gated test suite + contracts
-check: lint test contracts
+# prova que a imagem de RUNTIME importa a app com dependências de produção SÓ.
+#
+# Por que existe. O Dockerfile instala com `--no-dev`; `just test` roda no venv de DEV,
+# que tem tudo. Nenhum dos dois responde "a imagem sobe?". Em 3 fronts gerados deste
+# template o Dockerfile nem instalava o projeto, e o `uv run` do CMD escondia isso
+# baixando da PyPI a cada boot — num deles o resultado foi crash-loop de 60s em
+# produção, com uma dependência de runtime classificada em `dev`.
+#
+# Importa TODO módulo do pacote, não só `main`: no padrão Builder os imports acontecem
+# dentro dos passos `with_*`, então importar o módulo de entrada NÃO executa a cadeia
+# real. (Primeira versão desta receita importava só `main` e passava enquanto o
+# container quebrava.)
+cold-install:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    d="$(mktemp -d)"
+    trap 'rm -rf "$d"' EXIT
+    UV_PROJECT_ENVIRONMENT="$d/venv" uv sync --frozen --no-dev --quiet
+    "$d/venv/bin/python" - <<'PY'
+    import importlib, pkgutil, sys
+    import {{ module_name }} as pkg
+    falhas = []
+    for m in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + "."):
+        try:
+            importlib.import_module(m.name)
+        except Exception as exc:
+            falhas.append(f"{m.name}: {type(exc).__name__}: {exc}")
+    if falhas:
+        print("cold-install FALHOU — módulos de produção que não importam:", file=sys.stderr)
+        for f in falhas:
+            print(f"  {f}", file=sys.stderr)
+        sys.exit(1)
+    print("cold-install ok: todos os módulos importam com deps de produção apenas")
+    PY
+
+# gate local/CI: lint + full coverage-gated test suite + contracts + cold-install
+#
+# `cold-install` entra aqui porque é o único passo que responde "a imagem sobe?": `test`
+# roda no venv de DEV e não vê uma dependência de runtime classificada em `dev`.
+check: lint test contracts cold-install
 
 # pull scaffold/base improvements into this repo
 update:

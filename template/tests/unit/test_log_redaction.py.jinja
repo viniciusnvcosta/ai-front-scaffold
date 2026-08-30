@@ -1,0 +1,147 @@
+"""`{{ module_name }}.observability.redact` -- credencial não vai para o log.
+
+POR QUE ESTE TESTE VEM NO SCAFFOLD. Em 06/08/2026 um front gerado deste template
+publicou a credencial de escrita do seu sistema de registro em texto claro no log de
+produção, uma cópia por requisição: o cliente HTTP loga a URL completa em nível INFO, e
+a credencial viajava dentro da URL. Quem tinha leitura no log group passava a ter
+escrita no sistema de registro -- contorna o invariante de ESCRITOR ÚNICO por um caminho
+que nenhuma policy de IAM cobre.
+
+Estes testes pinam os caminhos que um simples `setLevel(WARNING)` no logger HTTP
+deixaria abertos, e o motivo de a redação ser um `Formatter` e não um `Filter`.
+
+ARMADILHA registrada de propósito, porque eu caí nela: NÃO construa a exceção do erro
+HTTP à mão com uma mensagem sua. `HTTPStatusError("minha mensagem", ...)` produz
+`str(exc) == "minha mensagem"`, sem URL — e as asserções `segredo not in ...` passam sem
+que haja nada para redigir. Provado por mutação: com a exceção fabricada, DESLIGAR a
+redação não derrubava teste nenhum. Deixe a biblioteca gerar a mensagem
+(`raise_for_status()`), e mantenha o teste que AFIRMA que ela carrega a URL.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import pytest
+
+from {{ module_name }}.observability.redact import (
+    RedactingFormatter,
+    install_log_redaction,
+    redact,
+    register_secrets,
+)
+
+SEGREDO = "s3cr3t-value-long-enough"
+
+
+def test_redacts_userinfo_in_a_url():
+    out = redact(f"conectando em postgresql://app:{SEGREDO}@db.internal:5432/store")
+    assert SEGREDO not in out
+    # O que precisa SOBREVIVER, senão a redação destrói o diagnóstico.
+    assert "db.internal:5432/store" in out
+    assert "app" in out
+
+
+@pytest.mark.parametrize(
+    "param", ["token", "api_key", "apikey", "password", "secret", "access_token", "signature"]
+)
+def test_redacts_secret_query_parameters(param):
+    out = redact(f"GET /v1/items?page=2&{param}={SEGREDO}&limit=50")
+    assert SEGREDO not in out
+    assert "page=2" in out and "limit=50" in out
+
+
+def test_redacts_the_authorization_header():
+    out = redact(f"Authorization: Bearer {SEGREDO}")
+    assert SEGREDO not in out
+    assert "Bearer" in out
+
+
+def test_leaves_alone_what_is_not_a_credential():
+    linha = "processando 3 itens do lote 42 em /v1/items"
+    assert redact(linha) == linha
+
+
+def test_redaction_is_idempotent():
+    once = redact(f"?token={SEGREDO}")
+    assert redact(once) == once
+
+
+def test_a_registered_value_is_redacted_in_any_shape():
+    # É o motivo da redação por VALOR: padrão nenhum pega o segredo logado solto.
+    register_secrets([SEGREDO])
+    assert SEGREDO not in redact(f"config carregada: chave={SEGREDO}")
+
+
+def test_a_short_or_empty_secret_is_ignored():
+    # Casca de segredo não preenchida é caso real, e `str.replace("", "***")` insere o
+    # placeholder entre TODOS os caracteres da linha.
+    register_secrets([None, "", "   ", "abc"])
+    linha = "item abc do lote 1"
+    assert redact(linha) == linha
+
+
+def test_formatter_redacts_a_secret_that_arrives_via_record_args():
+    """O caminho real: `log.warning("falhou: %s", exc)`.
+
+    O segredo entra por `record.args`, NÃO por `record.msg` — é exatamente o caso que um
+    `Filter` olhando `record.msg` deixaria passar.
+    """
+    register_secrets([SEGREDO])
+    record = logging.LogRecord(
+        name="t",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="falhou: %s",
+        args=(f"erro em https://api.example.com/x?token={SEGREDO}",),
+        exc_info=None,
+    )
+    # Pré-condições explícitas, senão o teste pode passar por vacuidade.
+    assert SEGREDO not in record.msg
+    assert SEGREDO in record.getMessage()
+
+    formatted = RedactingFormatter(logging.Formatter("%(message)s")).format(record)
+    assert SEGREDO not in formatted
+    assert "falhou" in formatted
+
+
+def test_formatter_redacts_the_exception_traceback():
+    """Traceback só existe DEPOIS da formatação — o argumento central pró-Formatter."""
+    import sys
+
+    register_secrets([SEGREDO])
+    try:
+        raise RuntimeError(f"conexão recusada em https://api.example.com/x?token={SEGREDO}")
+    except RuntimeError:
+        record = logging.LogRecord(
+            name="t",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="boom",
+            args=(),
+            exc_info=sys.exc_info(),
+        )
+
+    inner = logging.Formatter("%(message)s")
+    assert SEGREDO in inner.format(record), "pré-condição: sem redação o traceback vaza"
+
+    formatted = RedactingFormatter(inner).format(record)
+    assert "Traceback" in formatted
+    assert SEGREDO not in formatted
+
+
+def test_install_silences_the_per_request_http_line():
+    install_log_redaction()
+    for noisy in ("httpx", "httpcore", "urllib3"):
+        assert logging.getLogger(noisy).level >= logging.WARNING
+
+
+def test_install_wraps_every_root_handler_without_nesting():
+    install_log_redaction()
+    install_log_redaction()  # idempotente: não empilha Formatter
+    handlers = logging.getLogger().handlers
+    assert handlers, "esperava ao menos um handler na raiz"
+    assert all(isinstance(h.formatter, RedactingFormatter) for h in handlers)
+    assert not isinstance(handlers[0].formatter.inner, RedactingFormatter)
