@@ -9,8 +9,19 @@ from {{ module_name }} import main as main_mod
 
 
 class _Recorder:
+    """Dublê do `AIFront` — tem de honrar a interface declarada em §3 do base.
+
+    `config` existe porque `AIFront` a declara
+    (`config: dict = field(default_factory=dict)`) e `main()` a lê para resolver o nível
+    de log. Sem ela o dublê ficava INCOMPLETO e o teste quebrava com `AttributeError` no
+    primeiro front gerado — o dublê mentindo sobre o produto, não a produção sendo
+    frágil. Ao acrescentar em `main()` um passo que use outro campo do `AIFront`,
+    acrescente o campo aqui também.
+    """
+
     def __init__(self) -> None:
         self.called: list[str] = []
+        self.config: dict = {}
 
     def run(self) -> None:
         self.called.append("run")
