@@ -1,15 +1,23 @@
 """Client: wire the Director with this front's Concrete Builder."""
 from __future__ import annotations
 
-import logging
 {%- if recipe == 'gateway' %}
 import os
 {%- endif %}
 
 from .front.builder import {{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder
 from .front.director import FrontDirector
+from .observability.redact import install_log_redaction, register_secrets
 
-logging.basicConfig(level=logging.INFO)
+# No IMPORT, só com os padrões: cobre o que loga ANTES de a config existir — inclusive a
+# construção do front, que já pode fazer requisição. `main()` reinstala com o nível de
+# `LOG_LEVEL` e os segredos deste front registrados.
+#
+# Isto substitui um `logging.basicConfig(level=logging.INFO)` cru, e não é preferência
+# de estilo: com o basicConfig cru, um front gerado deste template publicou a credencial
+# de escrita do seu sistema de registro no log de produção, uma cópia por requisição.
+# Ver o cabeçalho de observability/redact.py.
+install_log_redaction()
 
 
 def build():
@@ -19,6 +27,14 @@ def build():
 
 def main() -> None:
     front = build()
+    # Reinstala com o nível de LOG_LEVEL e registra os segredos DESTE front. Registre
+    # aqui todo valor sensível que possa acabar numa mensagem de log — URL com
+    # credencial embutida, token, senha:
+    #     register_secrets([front.config.get("meu_webhook"), ...])
+    # A redação por valor cobre o que padrão nenhum pega: o segredo logado solto, sem a
+    # forma de URL em volta (um dict de config, por exemplo).
+    register_secrets([])
+    install_log_redaction(front.config.get("log_level", "INFO"))
 {%- if recipe == 'gateway' %}
     # One image, two deployables: APP_ROLE selects the process this container runs.
     # `api` answers requests (serve); anything else (default `worker`) runs the

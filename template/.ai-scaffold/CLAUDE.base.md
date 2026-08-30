@@ -220,7 +220,7 @@ front.run()      # event-driven recipes; an `api` front is driven by front.serve
 2. **Contracts first, versioned.** All inter-front communication goes through a versioned schema in `contracts/` (sourced from the platform layer). Changing a contract = PR + version bump. Contract tests are mandatory.
 3. **Provider-agnostic LLM, self-hostable first.** LLM access sits behind the `LLMAdapter` protocol in `llm/adapter.py`. The provider is a runtime choice (`LLM_PROVIDER`: `self_hosted` default | `anthropic` | `langchain`); external SDKs are **lazy-imported** and ship as **optional extras**, so importing the module never pulls in `anthropic`/`langchain` and the default self-hosted path has zero external deps. An external API is an isolated, opt-in fallback, never a hard dependency.
 4. **Risk gates are always human.** Irreversible or high-impact actions are routed through a human gate, never auto-executed.
-5. **No secrets in the repo.** `config/` holds only _references_ to secrets; values live in a secret manager. CI fails if a secret is detected.
+5. **No secrets in the repo — nor in the logs.** `config/` holds only _references_ to secrets; values live in a secret manager. CI fails if a secret is detected. The log half is the one that gets forgotten, so it is spelled out here: **a credential must never reach stdout/stderr**, and every front installs `observability/redact.py` from `main.py` to guarantee it. Two reasons this is an invariant and not a nicety. (a) A credential sitting in a log group hands write access to everyone who can read logs — which **defeats invariants 1, 7 and 8 through a path no IAM policy covers**. (b) It is silent: nothing fails, so it is only ever found by someone reading production logs. Concretely, on 06/08/2026 a front generated from this template published its system-of-record write credential once per request, because the HTTP client logs the full URL at INFO and the credential travelled inside the URL. Redaction is a `Formatter`, **not** a `Filter`: the leak arrives via `record.args` and via the traceback, and a `record.msg` filter sees neither. Each front registers its own sensitive values with `register_secrets()` in `main()` — pattern matching alone cannot catch a secret logged bare.
 6. **Idempotency.** Event consumers are idempotent (natural key, e.g. `event_id`). Reprocessing causes no duplicate effect.
 7. **Single channel owner.** Each external egress channel (messaging, email, telephony, …) is owned by exactly one `gateway` front, which enforces an eligibility/consent gate **before** any outbound message and emits status events. No other front holds that channel's credentials. Like the hub's single-writer rule, this keeps an external side effect funneled through one auditable boundary.
 8. **Single owner per operational store.** A `store/` (vector index, knowledge base, data lake, audit log) is owned by exactly one front (`retriever` reads/writes it; `sink` writes it). It is **not** the system of record — invariant 1 still applies, and only the `hub` writes that. No other front holds write credentials to someone else's store; cross-front access goes through events/contracts, never a shared connection.
@@ -236,6 +236,11 @@ front.run()      # event-driven recipes; an `api` front is driven by front.serve
 - [ ] `healthcheck()` is implemented and exposed; `ops/compose.fragment.yml` is updated.
 - [ ] No write credential to the system of record exists outside the `hub` front.
 - [ ] Secrets are referenced only; secret scanning in CI is green.
+- [ ] `main.py` installs `install_log_redaction()`, and every sensitive config value is passed
+      to `register_secrets()`. Verified in the ARTIFACT, not just in tests:
+      `docker run --network none <image> /app/.venv/bin/python -c ...` — `just test` runs in the
+      dev venv and cannot answer whether the image boots or whether it leaks.
+- [ ] `just cold-install` passes: the image installs the PROJECT, not only its dependencies.
 - [ ] LLM access is behind the adapter (self-hostable primary; isolated fallback).
 - [ ] Observability: structured logs and metrics are emitted.
 - [ ] Unit tests cover the front's distinctive `processors`/`collectors`.
@@ -251,6 +256,7 @@ just dev          # run the front locally against the platform layer
 just test         # unit + contract tests
 just contracts    # validate schemas against the pinned platform version
 just lint         # ruff + secret scan
+just cold-install # prova que a IMAGEM sobe: sync --no-dev num venv limpo + importa TODO o pacote
 just update       # copier update — pull scaffold/base improvements into this repo
 ```
 
@@ -265,3 +271,45 @@ just update       # copier update — pull scaffold/base improvements into this 
 5. Write the project `README.md` (scope + roadmap + success criteria).
 6. Keep the root `CLAUDE.md` as a thin pointer (see the generated template).
 7. Later, run `just update` (i.e. `copier update`) to absorb scaffold improvements.
+
+---
+
+## 8. Delivery workflow & quality gates (mandatory)
+
+### Execution model (orchestrator + fresh subagents)
+
+| Role         | Model                    | Responsibility                                                       |
+| ------------ | ------------------------ | -------------------------------------------------------------------- |
+| Orchestrator | Fable 5                  | plan, dispatch tasks, run gates, adjudicate reviews, commit, ledger   |
+| Implementer  | fresh subagent per task  | sonnet for code; haiku for mechanical docs/config                     |
+| Reviewers    | fresh subagents per task | two-stage: (1) spec compliance, (2) code quality — both must approve  |
+
+- Process: `superpowers:subagent-driven-development`; implementation is TDD red→green
+  (`tdd` / `superpowers:test-driven-development`). No production code before a failing test.
+- Escalation: after 2 failed implementer attempts on a task, the orchestrator model takes it over.
+- Tasks come from the plan in `docs/plans/`; session state goes to the gitignored ledger,
+  durable outcomes to CHANGELOG / ADRs.
+
+### Gates — all must pass before a task is done
+
+| Gate      | Rule                                                                                                |
+| --------- | ---------------------------------------------------------------------------------------------------- |
+| Tests     | `just test` green, coverage ≥ 90% (`--cov-fail-under=90` in the justfile, never in pytest addopts)   |
+| Lint      | `just lint` clean (ruff + gitleaks)                                                                  |
+| Contracts | `just contracts` (fronts) / conftest + rego policy suite (platform)                                  |
+| Commits   | Conventional Commits; NO Co-Authored-By or any generated-with footer                                 |
+| Flow      | PR-based only (Azure DevOps; PR via web URL) — never commit to main/develop                          |
+
+### Docs layout (every repo)
+
+- `docs/adr/NNNN-slug.md` — decisions, indexed from README · `docs/plans/<version>-<slug>.md` — sprint plans
+- `CHANGELOG.md` — Keep a Changelog · `CONTEXT.md` + `docs/agents/` — glossary + agent-skill config
+  (see `## Agent skills` in CLAUDE.md)
+
+### Security review cadence
+
+| When                      | Action                                                       |
+| ------------------------- | ------------------------------------------------------------ |
+| before every PR / merge   | `differential-review` plugin on the branch diff              |
+| every release             | `insecure-defaults` audit                                    |
+| per release (CLI present) | `static-analysis:semgrep` sweep (`uv tool install semgrep`)  |

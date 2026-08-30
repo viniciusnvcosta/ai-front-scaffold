@@ -27,7 +27,8 @@ packages = ["src/{{ module_name }}"]
 [dependency-groups]
 dev = [
     "pytest>=8",
-    "ruff>=0.6",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16,<0.17",  # pinned to the minor verified clean on the generated skeleton
     "jsonschema>=4",
 ]
 

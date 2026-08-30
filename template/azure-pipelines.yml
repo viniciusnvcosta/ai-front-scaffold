@@ -1,0 +1,55 @@
+# Azure DevOps pipeline — Gate only (padrão portado de platform-infra /
+# automation-poc-alert).
+#
+# Flow: PR -> Gate. Merge to develop/main -> Gate. Deploy stages (build/push +
+# ambientes) entram numa fase seguinte, quando a service connection e os
+# variable groups existirem no portal.
+#
+# Portal-side prerequisites (human-gated):
+#   - Branch-policy build validation on develop and main — Azure Repos IGNORA
+#     triggers `pr:` in-file; é a branch policy que roda o Gate em PRs.
+#
+# O Gate roda exatamente `just check` — o mesmo gate local (lint + pytest com
+# cobertura >=90% + contracts). Sem segredos.
+
+trigger:
+  branches:
+    include:
+      - develop
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - name: UV_CACHE_DIR
+    value: $(Pipeline.Workspace)/.uv-cache
+  - name: TOOLS_BIN
+    value: $(Pipeline.Workspace)/.tools-bin
+
+stages:
+  - stage: Gate
+    displayName: Gate — just check
+    jobs:
+      - job: Check
+        displayName: check (lint + pytest >=90% + contracts)
+        steps:
+          - task: Cache@2
+            displayName: Cache uv
+            inputs:
+              key: 'uv | "$(Agent.OS)" | uv.lock'
+              path: $(UV_CACHE_DIR)
+          - task: Cache@2
+            displayName: Cache pinned tools
+            inputs:
+              key: 'tools-v1 | "$(Agent.OS)" | .tool-versions'
+              path: $(TOOLS_BIN)
+          - bash: |
+              set -euo pipefail
+              bash tools/ci-install-tools.sh "$(TOOLS_BIN)"
+              echo "##vso[task.prependpath]$(TOOLS_BIN)"
+            displayName: Install pinned tools
+          - bash: uv sync --frozen
+            displayName: uv sync
+          - bash: just check
+            displayName: just check

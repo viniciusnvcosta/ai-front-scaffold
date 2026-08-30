@@ -14,10 +14,14 @@ ENV = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
 
 
 def test_liveness_exits_zero():
-    result = subprocess.run([sys.executable, str(SCRIPT)], cwd=ROOT, env=ENV)
+    # check=False: the exit code itself is the thing under test, not an error signal.
+    result = subprocess.run([sys.executable, str(SCRIPT)], cwd=ROOT, env=ENV, check=False)
     assert result.returncode == 0
 
 
 def test_readiness_exits_zero():
-    result = subprocess.run([sys.executable, str(SCRIPT), "--readiness"], cwd=ROOT, env=ENV)
+    # check=False: the exit code itself is the thing under test, not an error signal.
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--readiness"], cwd=ROOT, env=ENV, check=False
+    )
     assert result.returncode == 0
