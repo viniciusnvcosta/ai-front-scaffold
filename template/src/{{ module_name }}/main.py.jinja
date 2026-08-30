@@ -1,10 +1,8 @@
 """Client: wire the Director with this front's Concrete Builder."""
 from __future__ import annotations
-
-{%- if recipe == 'gateway' %}
+{% if recipe == 'gateway' %}
 import os
-{%- endif %}
-
+{% endif %}
 from .front.builder import {{ project_slug.replace('-', ' ').title().replace(' ', '') }}FrontBuilder
 from .front.director import FrontDirector
 from .observability.redact import install_log_redaction, register_secrets

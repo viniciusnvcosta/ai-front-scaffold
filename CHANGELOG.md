@@ -12,6 +12,28 @@ repos on their next update; read the entry before running it.
 
 ## [Unreleased]
 
+## [0.5.1]
+
+### Fixed
+- **`recipe=gateway` rendered a lint-dirty `main.py`.** In `main.py.jinja` the
+  gateway-only `import os` sat behind `{%- if %}`/`{%- endif %}`, whose leading
+  `-` strips the preceding whitespace — including the blank line after
+  `from __future__ import annotations`. That blank line used to be protected by
+  the `import logging` that 0.5.0 removed, so the defect appeared exactly when
+  that import went away. Result: `ruff` reported `I001 Import block is un-sorted
+  or un-formatted` on the `gateway` recipe and only that one, which meant
+  `just lint` — and therefore `just check`, the new blocking PR Gate — failed on
+  day one for every newly generated gateway front. Whitespace control removed;
+  all eight recipes now render lint-clean.
+
+  Measured at v0.5.0: 7 of 8 recipes `All checks passed`, `gateway` 1 error.
+  Measured here: 8 of 8 clean, tests and `cold-install` green on all eight.
+
+  **This is the defect the scaffold's own CI was blind to:** `.github/workflows/ci.yml`
+  renders all eight recipes but runs only `uv run pytest`, never `ruff`,
+  `cold-install` or `just check` — so a lint regression in a single recipe ships
+  undetected. See `docs/plans/0.5.0-integrar-branches-e-publicar.md` R6.
+
 ## [0.5.0]
 
 Credential redaction in logs, and an image that actually installs the project —
