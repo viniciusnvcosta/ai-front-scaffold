@@ -60,7 +60,7 @@ class AIFront:
                 if not probe():
                     return False
             except Exception:  # an unreachable dependency is "not ready", not a crash
-                log.warning("AIFront '%s' readiness probe failed on %r", self.name, resource)
+                log.exception("AIFront '%s' readiness probe failed on %r", self.name, resource)
                 return False
         return True
 

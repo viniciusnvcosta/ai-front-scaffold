@@ -11,9 +11,13 @@ bootstrap:
 dev:
     uv run {{ module_name }}
 
-# unit + contract tests
+# unit + contract tests (hermetic; never touches live external systems)
+# --cov-fail-under=90 gates the FULL suite here (not in [tool.pytest.ini_options] addopts):
+# `just contracts` runs a SUBSET (tests/contract_tests alone exercises a thin slice of
+# src/{{ module_name }}) whose per-subset coverage is inherently far below 90% — a global
+# addopts gate would fail an otherwise-green subset run.
 test:
-    uv run pytest -q
+    uv run pytest -q --cov=src/{{ module_name }} --cov-fail-under=90
 
 # validate I/O schemas against the pinned platform contracts
 contracts:
@@ -58,6 +62,12 @@ cold-install:
         sys.exit(1)
     print("cold-install ok: todos os módulos importam com deps de produção apenas")
     PY
+
+# gate local/CI: lint + full coverage-gated test suite + contracts + cold-install
+#
+# `cold-install` entra aqui porque é o único passo que responde "a imagem sobe?": `test`
+# roda no venv de DEV e não vê uma dependência de runtime classificada em `dev`.
+check: lint test contracts cold-install
 
 # pull scaffold/base improvements into this repo
 update:

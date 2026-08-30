@@ -12,6 +12,92 @@ repos on their next update; read the entry before running it.
 
 ## [Unreleased]
 
+## [0.4.0]
+
+Delivery-workflow standard — "from base", reaches every front on `copier update`.
+Upstreams into the template what the three mesh app repos
+(`campaign-manager`, `bitrix-orchestrator`, `lead-enrichment-engine`) had already
+received by hand over the last day, so future fronts are born with it and
+current ones adopt it deliberately via `just update`.
+
+### Added
+- **§8 "Delivery workflow & quality gates" in `CLAUDE.base.md`.** Documents the
+  orchestrator + fresh-subagent execution model, the gates a task must pass
+  (tests ≥90% coverage, lint, contracts, Conventional Commits with no
+  generated-with footer, PR-based flow only), the docs layout
+  (`docs/adr/`, `docs/plans/`, `CHANGELOG.md`, `CONTEXT.md`/`docs/agents/`),
+  and the security-review cadence (differential-review per PR,
+  insecure-defaults per release, semgrep per release).
+- **Coverage gate in the generated `justfile`.** `test` now runs
+  `pytest -q --cov=src/{{ module_name }} --cov-fail-under=90` (the flag lives in
+  the justfile recipe, never in `[tool.pytest.ini_options] addopts`, because
+  `just contracts` runs only the `tests/contract_tests` subset and a global
+  addopts gate would fail that otherwise-green subset run). New `check: lint
+  test contracts` recipe aggregates the full local/CI gate in one command.
+  `pytest-cov>=7.1.0` added to the `dev` dependency group.
+- **CI trio template**, byte-copied from the mesh app repos' shared donor
+  (`.tool-versions`, `tools/ci-install-tools.sh`, `azure-pipelines.yml`):
+  a `Gate` stage that installs the pinned toolchain (just/uv/gitleaks) and
+  runs exactly `just check`, with `uv`- and tool-cache steps keyed off
+  `uv.lock` / `.tool-versions`. No project-specific placeholders — copied
+  as plain (non-`.jinja`) files.
+- **`uv.lock` now tracked** in generated repos: the template's `.gitignore` no
+  longer ignores it. `uv sync --frozen` in the new CI Gate (and its cache key)
+  requires the lockfile to be committed — an untracked `uv.lock` made the CI
+  step and the cache non-reproducible. `.coverage` (the pytest-cov artifact
+  the new gate produces) is now ignored instead.
+- **`test_builder_interface.py.jinja`**: a new unit test calling every `with_*`
+  step directly on the Concrete Builder, independent of the recipe's assembly
+  order. Needed to keep the new gate accurate: `build()` alone only exercises
+  the steps THIS recipe's director calls, so thinner recipes (`scheduler`: 6 of
+  9 steps; `sink`: 6 of 9) undershot 90% purely because their by-design no-op
+  steps went unexercised (`scheduler` measured 89.89% before this test). All
+  eight recipes now clear the gate with margin (91.7-91.8%).
+
+### Fixed
+- **Generated-project skeleton made lint-clean, and `ruff` pinned to stay that
+  way.** This release is what turns `just lint` into a blocking CI gate (via
+  `just check`, run by the new `azure-pipelines.yml` Gate stage), so the
+  scaffold's own pre-existing rule drift — `ruff>=0.6` had quietly resolved to
+  0.16.0, whose newer default ruleset flagged 25 findings across
+  `ops/healthcheck.py`, `front/builder.py`, `front/product.py`,
+  `observability/__init__.py`, and `tests/unit/test_healthcheck_modes.py` —
+  would otherwise have shipped as a day-one failure on every new front. Fixed
+  in the skeleton, not suppressed:
+  - `front/builder.py.jinja` / `observability/__init__.py`: 19×`UP037`
+    (unneeded quoted forward refs now that `from __future__ import
+    annotations` is in effect) — quotes dropped.
+  - `ops/healthcheck.py.jinja`: the import guard now catches `ImportError`
+    specifically (that's the one real failure mode of "module name is
+    templated; if import path differs, treat as unhealthy" — no longer a
+    blind `except Exception`); the now-unnecessary `# noqa: F401` on that
+    import is gone (`build` is used lower down, so nothing was ever
+    unused — `RUF100`); the outer `except Exception` in `main()` is a
+    deliberate last-resort process boundary (this script's entire contract is
+    "any failure ⇒ unhealthy"), kept broad but now paired with
+    `log.exception(...)` — ruff's own documented exemption for blind excepts
+    that log with `exc_info` — instead of silently swallowing the traceback.
+  - `front/product.py`: `readiness()`'s per-resource probe catch mirrors the
+    same, already-established pattern one function below it in this file
+    (`shutdown()`'s resource-close loop) — `log.exception(...)` instead of
+    `log.warning(...)`, satisfying the identical ruff exemption instead of
+    guessing at a narrower exception type for an arbitrary duck-typed
+    `ready()`/`ping()` probe.
+  - `tests/unit/test_healthcheck_modes.py.jinja`: both `subprocess.run(...)`
+    calls gain explicit `check=False` (`PLW1510`) — correct as-is, since the
+    return code itself is the assertion, not an error signal.
+  - `pyproject.toml.jinja`: `ruff` pin narrowed to `>=0.16,<0.17` (the minor
+    verified clean above) so the ruleset can't silently drift again on a
+    future `uv sync`.
+
+### Notes
+- Recipe construction order is unchanged; no builder steps or public
+  signatures were altered.
+- `just check` (lint + coverage-gated test + contracts) is green on all eight
+  freshly generated recipes, including `scheduler` (the thinnest assembly
+  order) — verified by generating each from this tag and running `just
+  check` end to end (see report for full transcripts).
+
 ## [0.3.0]
 
 K8s readiness work — "from base", reaches every front on `copier update`.
