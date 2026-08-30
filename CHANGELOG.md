@@ -12,6 +12,87 @@ repos on their next update; read the entry before running it.
 
 ## [Unreleased]
 
+## [0.5.0]
+
+Credential redaction in logs, and an image that actually installs the project —
+"from base", reaches every front on `copier update`. Both halves come from
+defects found in **production** in fronts generated from this template, not from
+a hardening checklist.
+
+### Added
+- **`observability/redact.py` + wiring in `main.py`.** Every front now installs a
+  redacting log `Formatter` at import time (patterns only, covering whatever logs
+  before config exists — including front construction, which can already make
+  requests), and reinstalls it in `main()` with `LOG_LEVEL` honoured and the
+  front's own sensitive values registered via `register_secrets([...])`.
+  Why a `Formatter` and not a `Filter`: the leak arrives through `record.args`
+  and through the traceback, and a `record.msg` filter sees neither. Why
+  value-registration on top of patterns: pattern matching cannot catch a secret
+  logged bare, without a URL around it (a config dict, for instance).
+  The originating incident is documented in the module header and in
+  `CLAUDE.base.md` §4 invariant 5 — on 06/08/2026 a generated front published
+  its system-of-record **write credential** once per request, because the HTTP
+  client logs the full URL at INFO and the credential travelled inside it.
+  `register_secrets([])` ships as an explicit empty call in `main()`, so adopting
+  fronts see the seam they are expected to fill.
+- **`just cold-install`.** Proves the RUNTIME image imports the app with
+  production dependencies only: `uv sync --frozen --no-dev` into a throwaway venv,
+  then `pkgutil.walk_packages` over the whole package. It walks every module, not
+  just `main`, because in the Builder pattern the imports happen inside the
+  `with_*` steps — importing the entry module does not exercise the real chain.
+  Now part of `just check` (see Changed).
+- **17 tests** covering redaction (`tests/unit/test_log_redaction.py`) plus the
+  `APP_ROLE` addition in `test_app_role.py`.
+- **§4 invariant 5 of `CLAUDE.base.md` extended to logs**, with two new items on
+  the front checklist: `main.py` must install `install_log_redaction()` and pass
+  every sensitive config value to `register_secrets()` — verified **in the
+  artifact**, not only in tests — and `just cold-install` must pass.
+
+### Changed
+- **`just check` is now `lint test contracts cold-install`.** The recipe arrived
+  in 0.4.0 with three steps; `cold-install` is the only one of the four that
+  answers "does the image come up?" — `test` runs in the DEV venv and cannot see
+  a runtime dependency misclassified under `dev`.
+- **`Dockerfile` now runs two `uv sync` and sets `UV_NO_SYNC=1`.** ⚠️ **Practical
+  break for adopters — see Migration.** The previous template had a single sync
+  *before* `COPY . .`, so it installed the dependencies and **never the project**;
+  `CMD ["uv", "run", ...]` hid this by syncing at runtime, on every container
+  boot. Found in production in three fronts (`whatsapp-sales-agent`,
+  `campaign-manager`, `bitrix-orchestrator`). The consequences were all real: the
+  container only started if PyPI was reachable; `uv run` synced the DEFAULT group,
+  so the "production" image installed ruff and pytest at every boot; the artifact
+  stopped being reproducible, which voids the point of pinning an image by digest
+  in IaC; and in one front the defect stayed invisible until `--no-dev` was fixed,
+  then surfaced as a **60-second crash-loop in production** because a runtime
+  dependency was classified under `dev` and the boot-time sync had been installing
+  it by accident.
+  First sync installs dependencies only (`--no-install-project`) so the layer
+  stays cached when just the code changes; the second, after `COPY . .`, installs
+  the project. `UV_NO_SYNC=1` then stops `uv run` from re-syncing on every
+  invocation — including in the `HEALTHCHECK`, which runs every 30s.
+- **`logging.basicConfig(level=logging.INFO)` removed from `main.py`**, replaced
+  by `install_log_redaction()`. Not a style preference: it is the raw
+  `basicConfig` that let the incident above happen.
+
+### Fixed
+- **`redact()` no longer crashes on a group-less extra pattern.** Substitution
+  always used `\1`, so a front adding a pattern to `EXTRA_PATTERNS` without a
+  capture group — an easy mistake — raised `re.error` and could break the logging
+  path at runtime. Patterns with no group now replace the whole match.
+
+### Migration
+- **Rebuild the image after `just update`.** The new `Dockerfile` produces a
+  different layer set and therefore a **new digest**; any IaC pinning the old
+  digest must be updated. This is the one item in this release that needs human
+  action beyond reviewing the `copier update` diff.
+- **Register your secrets.** `register_secrets([])` lands empty. Every front
+  should pass its own sensitive config values — a webhook URL with an embedded
+  credential, a token, a password. Patterns alone will not cover a secret logged
+  bare.
+- Fronts adopting this release inherit `cold-install` inside `just check`, which
+  can turn a previously green gate red if the image never installed the project.
+  That failure is the feature.
+
 ## [0.4.0]
 
 Delivery-workflow standard — "from base", reaches every front on `copier update`.
