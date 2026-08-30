@@ -12,6 +12,46 @@ repos on their next update; read the entry before running it.
 
 ## [Unreleased]
 
+## [0.5.1]
+
+### Fixed
+- **`recipe=gateway` rendered a lint-dirty `main.py`.** In `main.py.jinja` the
+  gateway-only `import os` sat behind `{%- if %}`/`{%- endif %}`, whose leading
+  `-` strips the preceding whitespace — including the blank line after
+  `from __future__ import annotations`. That blank line used to be protected by
+  the `import logging` that 0.5.0 removed, so the defect appeared exactly when
+  that import went away. Result: `ruff` reported `I001 Import block is un-sorted
+  or un-formatted` on the `gateway` recipe and only that one, which meant
+  `just lint` — and therefore `just check`, the new blocking PR Gate — failed on
+  day one for every newly generated gateway front. Whitespace control removed;
+  all eight recipes now render lint-clean.
+
+  Measured at v0.5.0: 7 of 8 recipes `All checks passed`, `gateway` 1 error.
+  Measured here: 8 of 8 clean, tests and `cold-install` green on all eight.
+
+  **This is the defect the scaffold's own CI was blind to** — fixed in the same
+  release, see below.
+
+### Changed
+- **The scaffold's CI now runs the whole gate, not just `pytest`.**
+  `.github/workflows/ci.yml` rendered all eight recipes and ran `uv run pytest`,
+  never `ruff`, `cold-install` or `just check` — which is precisely how the
+  `gateway` lint regression above shipped in v0.5.0 with a green matrix. The
+  workflow now installs the pinned toolchain via the generated project's own
+  `tools/ci-install-tools.sh` (its first exercise anywhere) and runs
+  `just check` — the same command the generated front's PR Gate runs
+  (`template/azure-pipelines.yml`). The scaffold now proves the gate it promises
+  its children. Closes R6 of
+  `docs/plans/0.5.0-integrar-branches-e-publicar.md`.
+
+  Regression proof, run on `recipe=gateway`:
+
+  | Template | Workflow | Result |
+  | --- | --- | --- |
+  | v0.5.0 (defective) | new (`just check`) | **exit 1** — caught |
+  | v0.5.0 (defective) | old (`pytest`) | exit 0 — how it shipped |
+  | this release | new (`just check`) | exit 0 |
+
 ## [0.5.0]
 
 Credential redaction in logs, and an image that actually installs the project —
@@ -79,6 +119,20 @@ a hardening checklist.
   always used `\1`, so a front adding a pattern to `EXTRA_PATTERNS` without a
   capture group — an easy mistake — raised `re.error` and could break the logging
   path at runtime. Patterns with no group now replace the whole match.
+- **`LOG_LEVEL` is now honoured case-insensitively and never aborts the boot.**
+  The level string went straight to `logging.basicConfig`/`setLevel`, which raise
+  `ValueError` on anything but the canonical uppercase name — so `LOG_LEVEL=debug`
+  killed the process. Since the call happens in `main()` *after* `build()`, it
+  took down an already-assembled front: crash-loop. Values are now normalised
+  (case, surrounding space, numeric strings) and an unknown name degrades to INFO
+  with a warning. A wrong log level is never a reason for the service not to come
+  up. Note this is a live behaviour change relative to 0.4.0, where
+  `logging.basicConfig(level=logging.INFO)` ignored `LOG_LEVEL` entirely — fronts
+  that set it will now actually get that level.
+- **`just --list` is readable again.** `just` uses only the last contiguous
+  comment line above a recipe as its doc, so the rationale blocks on `test`,
+  `cold-install` and `check` rendered as mid-sentence fragments — in the recipe
+  that is every generated front's `default`.
 
 ### Migration
 - **Rebuild the image after `just update`.** The new `Dockerfile` produces a

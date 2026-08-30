@@ -16,6 +16,8 @@ dev:
 # `just contracts` runs a SUBSET (tests/contract_tests alone exercises a thin slice of
 # src/{{ module_name }}) whose per-subset coverage is inherently far below 90% — a global
 # addopts gate would fail an otherwise-green subset run.
+
+# unit + contract tests, coverage-gated at 90%
 test:
     uv run pytest -q --cov=src/{{ module_name }} --cov-fail-under=90
 
@@ -40,6 +42,8 @@ lint:
 # dentro dos passos `with_*`, então importar o módulo de entrada NÃO executa a cadeia
 # real. (Primeira versão desta receita importava só `main` e passava enquanto o
 # container quebrava.)
+
+# prova que a imagem de runtime importa o pacote inteiro com deps de produção só
 cold-install:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -63,10 +67,10 @@ cold-install:
     print("cold-install ok: todos os módulos importam com deps de produção apenas")
     PY
 
-# gate local/CI: lint + full coverage-gated test suite + contracts + cold-install
-#
 # `cold-install` entra aqui porque é o único passo que responde "a imagem sobe?": `test`
 # roda no venv de DEV e não vê uma dependência de runtime classificada em `dev`.
+
+# gate local/CI: lint + test + contracts + cold-install
 check: lint test contracts cold-install
 
 # pull scaffold/base improvements into this repo

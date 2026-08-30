@@ -145,3 +145,31 @@ def test_install_wraps_every_root_handler_without_nesting():
     assert handlers, "esperava ao menos um handler na raiz"
     assert all(isinstance(h.formatter, RedactingFormatter) for h in handlers)
     assert not isinstance(handlers[0].formatter.inner, RedactingFormatter)
+
+
+@pytest.mark.parametrize(
+    ("valor", "esperado"),
+    [
+        ("debug", logging.DEBUG),   # minúsculo: a forma que mata o processo sem _coerce_level
+        ("DEBUG", logging.DEBUG),
+        (" warning ", logging.WARNING),
+        ("WARN", logging.WARNING),
+        ("10", logging.DEBUG),      # numérico em string, como vem de env
+        (logging.ERROR, logging.ERROR),
+    ],
+)
+def test_log_level_aceita_as_formas_que_aparecem_em_config_de_deploy(valor, esperado):
+    install_log_redaction(valor)
+    assert logging.getLogger().level == esperado
+
+
+@pytest.mark.parametrize("lixo", ["", "verboso", "TRACE", "   "])
+def test_log_level_invalido_degrada_para_info_em_vez_de_derrubar_o_processo(lixo):
+    """Nível de log errado nunca é motivo para o container não subir.
+
+    `install_log_redaction` é chamada em `main()`, DEPOIS de `build()`: um ValueError aqui
+    derruba o front já construído e vira crash-loop. Antes deste conserto,
+    `LOG_LEVEL=debug` bastava para isso.
+    """
+    install_log_redaction(lixo)
+    assert logging.getLogger().level == logging.INFO

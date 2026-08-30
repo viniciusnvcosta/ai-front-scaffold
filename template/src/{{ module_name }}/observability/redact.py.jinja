@@ -133,15 +133,42 @@ def _redacting_excepthook(exc_type, exc, tb) -> None:
     sys.stderr.write(redact("".join(traceback.format_exception(exc_type, exc, tb))))
 
 
+# Nomes que o `logging` aceita. Lista explícita em vez de `getLevelNamesMapping()`
+# (3.11+) porque `python_version` é resposta do copier e pode ser 3.10.
+_LEVEL_NAMES = ("CRITICAL", "FATAL", "ERROR", "WARNING", "WARN", "INFO", "DEBUG", "NOTSET")
+
+
+def _coerce_level(level: int | str) -> int:
+    """Traduz o valor de `LOG_LEVEL` num nível do `logging`, sem derrubar o processo.
+
+    `logging.basicConfig`/`setLevel` levantam `ValueError` em qualquer coisa que não seja
+    a forma canônica em MAIÚSCULAS — e `LOG_LEVEL=debug` é escrita comum em config de
+    deploy. Como esta função é chamada em `main()`, DEPOIS de `build()`, um valor
+    minúsculo derrubaria o front já construído e o container entraria em crash-loop.
+    Nível de log errado nunca é motivo para o serviço não subir: degrada para INFO e
+    avisa.
+    """
+    if isinstance(level, int):
+        return level
+    name = str(level).strip().upper()
+    if name.isdigit():
+        return int(name)
+    if name in _LEVEL_NAMES:
+        return getattr(logging, name)
+    logging.getLogger(__name__).warning("LOG_LEVEL inválido: %r — usando INFO", level)
+    return logging.INFO
+
+
 def install_log_redaction(level: int | str = logging.INFO) -> None:
     """Instala a redação em todo o caminho de log. Idempotente.
 
     Chame no IMPORT de `main.py` (cobre o que loga antes de a config existir) e de novo
     em `main()`, já com `LOG_LEVEL` e os segredos registrados.
     """
-    logging.basicConfig(level=level)
+    resolved = _coerce_level(level)
+    logging.basicConfig(level=resolved)
     root = logging.getLogger()
-    root.setLevel(level)
+    root.setLevel(resolved)
 
     for handler in root.handlers:
         current = handler.formatter

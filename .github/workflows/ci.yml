@@ -14,5 +14,25 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Render template (recipe=${{ matrix.recipe }})
         run: uvx copier copy --defaults --trust -d project_name="CI Front" -d recipe=${{ matrix.recipe }} . /tmp/ci-front
-      - name: Generated project tests pass
-        run: cd /tmp/ci-front && uv run pytest -q
+
+      # Installs just (and the rest of the pinned toolchain) from the rendered
+      # project's own .tool-versions. Doubles as the only exercise
+      # tools/ci-install-tools.sh gets — it ships to every front and is
+      # otherwise never run here.
+      - name: Install the pinned toolchain
+        run: /tmp/ci-front/tools/ci-install-tools.sh "$HOME/.local/bin"
+
+      - name: Resolve dependencies (what `just bootstrap` does)
+        run: cd /tmp/ci-front && uv sync
+
+      # The whole gate, not just pytest: ruff + secret scan, the coverage-gated
+      # suite, contracts, and cold-install. Running only `pytest` here is how a
+      # lint regression in a single recipe shipped in v0.5.0 — `gateway` rendered
+      # an unsorted import block and this workflow stayed green on all eight.
+      # `just check` is also exactly what the generated front's own PR Gate runs
+      # (template/azure-pipelines.yml), so the scaffold now proves the gate it
+      # promises its children.
+      - name: Generated project passes the full gate
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          cd /tmp/ci-front && just check
